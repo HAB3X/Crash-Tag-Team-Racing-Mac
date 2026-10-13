@@ -128,7 +128,9 @@ time). RPC servers stand in for the modules:
 | iop heap (0x80000003) | allocations in the IOP memory |
 | fileio (0x80000001) | open, read, lseek, close on the disc image; SDK 2.5's asynchronous completion (result written, semaphore signalled) |
 | cdvd (0x80000592-0x8000059C) | init, media mode, disk type, disk ready, search file |
-| padman, mcserv, libsd/sdrdrv | answered with zeros: no pads, no memory card, no sound yet |
+| padman (0x80000100) | SDK 2.x libpad: port open/close, main mode, pressure mode, actuators; port 0 has a DualShock 2 whose two frames in EE memory are rewritten at every vblank (`iop/padman.cpp`) |
+| mcserv (0x80000400) | the libmc of SDKs before 2.6: init, info, open, close, seek, read, write, flush, chdir, getdir, set file info, delete, format; each port's card is a host folder (`iop/mcserv.cpp`) |
+| libsd/sdrdrv | answered with zeros: no sound yet |
 | a game's own modules | registered by the game (`ps2/iop.h`): WoC's NUSOUND |
 
 The alternative, emulating the IOP's MIPS R3000 and running the real IRX modules, would bring sound and pads for free but needs an
@@ -142,9 +144,21 @@ the pipelines' timing. It is game-neutral: Twinsanity's own renderer reached it 
 The runtime wires it: VU1's XGKICK to the GIF, VU0's registers to the recompiled code, the GS's SIGNAL/FINISH to the CSR, and
 the PCRTC's picture to the presenter at each vblank (an SDL3 window, or PNGs with `--headless --snapshots`).
 
+### Controllers and memory cards
+
+Port 0's controller is the keyboard and the first gamepad SDL3 finds (`input.cpp`: arrows the d-pad, W A S D and I J K L the
+sticks, Return start, Backspace select, X C Z V cross circle square triangle, Q E L1 R1, 1 3 L2 R2), plus presses scripted
+with `--press 30:start,31:cross` for headless runs. The memory cards are folders, `port0` and `port1`, in `--memcards DIR`
+(by default `~/Library/Application Support/PS2 Native Runtime/<executable>/memcards`): port 0's card is always in, port 1's
+when its folder exists. A save is the game's own directory of files, as on the card.
+
+### Debugging
+
+`--watch ADDR[:WORDS],...` logs guest memory every `--watch-every` seconds; `--log` turns on the channels' logs.
+
 ### Not done yet
 
-Sound (SPU2 and the game's sound driver), pads, the memory card, movies (IPU), MFIFO, the VU flags in macro mode, the FPU's
+Sound (SPU2 and the game's sound driver), rumble, the memory card's newer protocol (libmc 2.6 on), movies (IPU), MFIFO, the VU flags in macro mode, the FPU's
 exact rounding, and the OpenGL renderer's hookup (the software GS draws).
 
 ## Repositories and licences

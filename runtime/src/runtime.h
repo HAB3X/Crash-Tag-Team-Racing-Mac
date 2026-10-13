@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+union SDL_Event;
+
 namespace Gs
 {
 class Gs;
@@ -140,8 +142,26 @@ struct Options
     std::vector<double> snapshotAt;
     double runSeconds = 0;      // stop after this long (0: never)
     u32 logMask = 0;
+    // Guest words logged every watchEvery seconds: (address, count)
+    std::vector<std::pair<u32, u32>> watch;
+    double watchEvery = 1;
+    // The memory cards' folders (port0, port1 in it)
+    std::string memcardDir;
+    // Buttons pressed at given times (seconds): port 0's PS2 button bits, held for a while
+    struct Press
+    {
+        double at;
+        double hold;
+        u32 buttons;
+    };
+    std::vector<Press> presses;
 };
 extern Options g_options;
+
+// --- input.cpp: port 0's controller from the keyboard, a gamepad and --press
+u32 ButtonsFromNames(const std::string& names);
+void InputEvent(const ::SDL_Event& e);
+void InputUpdate(double seconds, bool window);
 
 // --- disc.cpp
 bool DiscOpen(const std::string& path);
@@ -161,5 +181,12 @@ void IopUpdate();
 // The EE took the IOP's last reply (its SifSetDChain, or the end of its SIF0 interrupt)
 void SifReplyTaken();
 u8* IopMem();
+
+// --- iop/padman.cpp
+// The pads' frames, rewritten at each vertical blank (the IOP's PADMAN does it then)
+void PadVblank();
+// A port's buttons (PS2 bits, 1 = pressed: select, L3, R3, start, up, right, down, left, L2, R2, L1, R1, triangle, circle,
+// cross, square) and sticks (right x, right y, left x, left y; 0x80 is the centre)
+void PadSetInput(u32 port, u32 pressed, const u8 sticks[4]);
 constexpr u32 IopRamSize = 2 * 1024 * 1024;
 }

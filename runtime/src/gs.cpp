@@ -284,13 +284,14 @@ void PresenterRun()
     auto start = clock::now();
     double nextEvery = g_options.snapshotEvery;
     size_t nextAt = 0;
+    double nextWatch = 0;
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     SDL_Texture* texture = nullptr;
     u32 texW = 0, texH = 0;
     if (!g_options.headless)
     {
-        if (!SDL_Init(SDL_INIT_VIDEO))
+        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
         {
             Log("SDL_Init: %s (running headless)", SDL_GetError());
             g_options.headless = true;
@@ -322,6 +323,7 @@ void PresenterRun()
             }
         }
         double t = std::chrono::duration<double>(clock::now() - start).count();
+        InputUpdate(t, window != nullptr);
         if (image.width != 0 && !g_options.snapshotDir.empty())
         {
             char name[64];
@@ -340,6 +342,23 @@ void PresenterRun()
                 nextAt++;
             }
         }
+        if (!g_options.watch.empty() && t >= nextWatch)
+        {
+            std::string line;
+            for (const auto& [address, count] : g_options.watch)
+            {
+                char item[32];
+                snprintf(item, sizeof(item), " %08x:", address);
+                line += item;
+                for (u32 k = 0; k < count; k++)
+                {
+                    snprintf(item, sizeof(item), " %08x", Read32(address + k * 4));
+                    line += item;
+                }
+            }
+            Log("watch %.1f s:%s", t, line.c_str());
+            nextWatch += g_options.watchEvery;
+        }
         if (g_options.runSeconds > 0 && t >= g_options.runSeconds)
         {
             Log("ran %.0f s: stopping", t);
@@ -355,6 +374,7 @@ void PresenterRun()
                 {
                     g_stop = true;
                 }
+                InputEvent(e);
             }
             if (g_stop)
             {

@@ -321,6 +321,7 @@ void ServiceLocked(std::unique_lock<std::mutex>& lock)
     {
         lock.unlock();
         GsVblank(true);
+        PadVblank();
         lock.lock();
         g_intcStat |= 1u << 2;
         if (g_vsyncFlag != 0)

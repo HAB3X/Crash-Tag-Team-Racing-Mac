@@ -18,7 +18,8 @@ void Usage(const char* program)
 {
     fprintf(stderr,
             "usage: %s --disc IMAGE [--headless] [--snapshots DIR] [--snapshot-every S] [--snapshot-at S,S,...]\n"
-            "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq]\n",
+            "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq]\n"
+            "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--press S:BUTTON[+BUTTON][:HOLD],...]\n",
             program);
 }
 
@@ -137,6 +138,59 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
         {
             g_options.runSeconds = atof(next().c_str());
         }
+        else if (a == "--watch")
+        {
+            std::string list = next();
+            size_t start = 0;
+            while (start < list.size())
+            {
+                size_t comma = list.find(',', start);
+                std::string item = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                size_t colon = item.find(':');
+                u32 address = static_cast<u32>(strtoul(item.c_str(), nullptr, 16));
+                u32 count = colon == std::string::npos ? 1 : static_cast<u32>(strtoul(item.c_str() + colon + 1, nullptr, 0));
+                g_options.watch.emplace_back(address, count);
+                if (comma == std::string::npos)
+                {
+                    break;
+                }
+                start = comma + 1;
+            }
+        }
+        else if (a == "--watch-every")
+        {
+            g_options.watchEvery = atof(next().c_str());
+        }
+        else if (a == "--press")
+        {
+            // 30:start, 31.5:cross+up:0.5 (held 0.15 s unless said)
+            std::string list = next();
+            size_t start = 0;
+            while (start < list.size())
+            {
+                size_t comma = list.find(',', start);
+                std::string item = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                size_t c1 = item.find(':');
+                size_t c2 = c1 == std::string::npos ? std::string::npos : item.find(':', c1 + 1);
+                if (c1 != std::string::npos)
+                {
+                    Options::Press p;
+                    p.at = atof(item.substr(0, c1).c_str());
+                    p.buttons = ButtonsFromNames(item.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1));
+                    p.hold = c2 == std::string::npos ? 0.15 : atof(item.c_str() + c2 + 1);
+                    g_options.presses.push_back(p);
+                }
+                if (comma == std::string::npos)
+                {
+                    break;
+                }
+                start = comma + 1;
+            }
+        }
+        else if (a == "--memcards")
+        {
+            g_options.memcardDir = next();
+        }
         else if (a == "--log")
         {
             g_options.logMask = ParseLog(next());
@@ -161,6 +215,13 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
         return 2;
     }
     g_logMask = g_options.logMask;
+    if (g_options.memcardDir.empty())
+    {
+        // ~/Library/Application Support/PS2 Native Runtime/<the executable>/
+        const char* home = getenv("HOME");
+        g_options.memcardDir = std::string(home != nullptr ? home : ".") +
+                               "/Library/Application Support/PS2 Native Runtime/" + game->executable + "/memcards";
+    }
 
     MemoryInit();
     if (!DiscOpen(g_options.disc))

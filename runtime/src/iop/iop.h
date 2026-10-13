@@ -17,6 +17,10 @@ void IopReset();
 void IopSetImage(const std::string& path);
 void IopServersInit();
 void IopServe(RpcCall& call);
+// The memory card server (mcserv.cpp)
+void McServ(RpcCall& call);
+// The pad server (padman.cpp)
+void PadMan(RpcCall& call);
 const char* IopServerName(u32 sid);
 void SifReplyTaken();
 }

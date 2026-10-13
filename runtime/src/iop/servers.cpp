@@ -1,5 +1,5 @@
 // The RPC servers of the IOP modules, high level: the module loader, the IOP heap, the file I/O manager (on the disc image),
-// the CD/DVD driver, and stand-ins answering zeros for the rest. Every call to a server or function not done here is logged
+// the CD/DVD driver, the memory card (mcserv.cpp), the pads (padman.cpp), and stand-ins answering zeros for the rest. Every call to a server or function not done here is logged
 // once with its arguments: that log is the list of what's left.
 #include "iop.h"
 
@@ -384,6 +384,13 @@ void IopServe(RpcCall& c)
         break;
     case 0x80000001:
         FileIo(c);
+        break;
+    case 0x80000400:
+        McServ(c);
+        break;
+    case 0x80000100:
+    case 0x80000101:
+        PadMan(c);
         break;
     case 0x80000592:
     case 0x80000593:

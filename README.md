@@ -14,7 +14,7 @@ This is a work in progress and it still has bugs.
 * `recomp/`: the recompiler (Python). It finds the functions of a stripped executable and turns every R5900 instruction into C,
   including the 128-bit MMI set, the FPU and VU0 macro mode
 * `runtime/`: the EE's address space, the hardware registers, the DMA controller, a high level kernel (threads, semaphores,
-  interrupts) and a high level IOP (the SIF and the module's RPC servers: files, CD, module loading)
+  interrupts) and a high level IOP (the SIF and the modules' RPC servers: files, CD, module loading, pads, memory cards)
 * `hw/`: the GS, GIF, VIF and VU emulation from the Crash Twinsanity native port (see `hw/README.md`)
 * `tools/`: reading files from a disc image, disassemblers for the R5900 and the VUs
 
@@ -22,7 +22,7 @@ This is a work in progress and it still has bugs.
 
 ## Still to do
 
-* Sound, controllers and the memory card
+* Sound
 * Movies
 * The OpenGL renderer (the software GS draws for now)
 * Windows and Linux

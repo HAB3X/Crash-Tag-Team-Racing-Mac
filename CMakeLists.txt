@@ -33,12 +33,15 @@ add_library(ps2runtime STATIC
     runtime/src/disc.cpp
     runtime/src/dmac.cpp
     runtime/src/gs.cpp
+    runtime/src/input.cpp
     runtime/src/io.cpp
     runtime/src/kernel.cpp
     runtime/src/log.cpp
     runtime/src/memory.cpp
     runtime/src/mmi.c
     runtime/src/iop/sif.cpp
+    runtime/src/iop/mcserv.cpp
+    runtime/src/iop/padman.cpp
     runtime/src/iop/servers.cpp
 )
 target_include_directories(ps2runtime PUBLIC runtime/include)
