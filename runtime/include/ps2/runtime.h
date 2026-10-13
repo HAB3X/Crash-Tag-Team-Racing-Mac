@@ -17,7 +17,23 @@ typedef struct Ps2GameInfo
     // Optional. Called at every vertical blank on the game's side, between its instructions (the game's own memory can be
     // changed here: typed text put in)
     void (*vblank)(void);
+    // Optional. Whether a menu is up: Return is then cross (confirm) and Backspace triangle (back), and the mouse's left
+    // button clicks (ps2_take_click) instead of pressing its bound button
+    int (*menu)(void);
 } Ps2GameInfo;
+
+// The mouse over the picture: where it is (0-1 across and down the PS2's picture; false when it's outside it or hasn't moved
+// since the last ask), and its left button's clicks, taken one at a time (where, the same way)
+#ifdef __cplusplus
+extern "C"
+#endif
+    int
+    ps2_mouse_moved(float* x, float* y);
+#ifdef __cplusplus
+extern "C"
+#endif
+    int
+    ps2_take_click(float* x, float* y);
 
 // What's been typed while the game was taking text (UTF-8; '\b' for backspace, '\r' for return), taken: up to max bytes into
 // out, the count returned

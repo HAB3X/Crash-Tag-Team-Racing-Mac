@@ -440,6 +440,7 @@ void PresenterRun()
                 {
                     g_stop = true;
                 }
+                SDL_ConvertEventToRenderCoordinates(renderer, &e);
                 InputEvent(e);
             }
             if (g_stop)
@@ -467,6 +468,7 @@ void PresenterRun()
                 float scale = std::min(w / 640.0f, h / 480.0f);
                 SDL_FRect dst = {(w - 640 * scale) / 2, (h - 480 * scale) / 2, 640 * scale, 480 * scale};
                 SDL_RenderTexture(renderer, texture, nullptr, &dst);
+                InputPicture(dst.x, dst.y, dst.w, dst.h);
                 SDL_RenderPresent(renderer);
             }
         }

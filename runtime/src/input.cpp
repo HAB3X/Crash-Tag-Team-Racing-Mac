@@ -112,6 +112,12 @@ SDL_MouseButtonFlags g_mouse = 0;
 bool g_walking = false;
 bool g_walkHeld = false;
 bool g_typing = false;
+bool g_menu = false;
+// The picture's place in the window's render coordinates (the presenter's), the mouse over it, and its clicks
+SDL_FRect g_picture = {0, 0, 0, 0};
+float g_mouseX = -1, g_mouseY = -1;
+bool g_mouseMoved = false;
+std::vector<std::pair<float, float>> g_clicks;
 std::mutex g_typedLock;
 std::string g_typed;
 // Buttons the game's side pressed itself (ps2_press_buttons): asked for, then held until a time
@@ -284,8 +290,27 @@ u32 ButtonsFromNames(const std::string& names)
 
 void InputInit() { LoadBindings(); }
 
+void InputPicture(float x, float y, float w, float h) { g_picture = {x, y, w, h}; }
+
 void InputEvent(const SDL_Event& e)
 {
+    if ((e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) && g_picture.w > 0)
+    {
+        float mx = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.x : e.button.x;
+        float my = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.y : e.button.y;
+        float x = (mx - g_picture.x) / g_picture.w, y = (my - g_picture.y) / g_picture.h;
+        std::lock_guard<std::mutex> lock(g_typedLock);
+        if (e.type == SDL_EVENT_MOUSE_MOTION)
+        {
+            g_mouseX = x;
+            g_mouseY = y;
+            g_mouseMoved = true;
+        }
+        else if (e.button.button == SDL_BUTTON_LEFT && g_menu && x >= 0 && x < 1 && y >= 0 && y < 1)
+        {
+            g_clicks.emplace_back(x, y);
+        }
+    }
     if (e.type == SDL_EVENT_GAMEPAD_ADDED && g_gamepad == nullptr)
     {
         g_gamepad = SDL_OpenGamepad(e.gdevice.which);
@@ -360,6 +385,7 @@ void InputUpdate(double t, SDL_Window* window)
         }
     }
     g_typing = typing;
+    g_menu = g_game != nullptr && g_game->menu != nullptr && g_game->menu() != 0;
     if (window != nullptr)
     {
         const bool* keyboard = SDL_GetKeyboardState(nullptr);
@@ -373,6 +399,11 @@ void InputUpdate(double t, SDL_Window* window)
                 // While typing only the mouse and the arrows still press buttons
                 if (typing && key < MouseBase && key != SDL_SCANCODE_UP && key != SDL_SCANCODE_DOWN &&
                     key != SDL_SCANCODE_LEFT && key != SDL_SCANCODE_RIGHT)
+                {
+                    continue;
+                }
+                // In a menu the mouse's left button clicks (ps2_take_click), Return confirms and Backspace goes back
+                if (g_menu && (key == MouseLeft || key == SDL_SCANCODE_RETURN || key == SDL_SCANCODE_BACKSPACE))
                 {
                     continue;
                 }
@@ -394,6 +425,14 @@ void InputUpdate(double t, SDL_Window* window)
             {
                 pressed |= a.button;
             }
+        }
+        if (g_menu && !typing && keyboard[SDL_SCANCODE_RETURN])
+        {
+            pressed |= Cross;
+        }
+        if (g_menu && !typing && keyboard[SDL_SCANCODE_BACKSPACE])
+        {
+            pressed |= Triangle;
         }
         if (walkHeld && !g_walkHeld)
         {
@@ -471,6 +510,32 @@ extern "C" void ps2_press_buttons(uint32_t buttons, double seconds)
     std::lock_guard<std::mutex> lock(g_typedLock);
     g_synthAsked = buttons;
     g_synthFor = seconds;
+}
+
+extern "C" int ps2_mouse_moved(float* x, float* y)
+{
+    std::lock_guard<std::mutex> lock(g_typedLock);
+    if (!g_mouseMoved || g_mouseX < 0 || g_mouseX >= 1 || g_mouseY < 0 || g_mouseY >= 1)
+    {
+        return 0;
+    }
+    g_mouseMoved = false;
+    *x = g_mouseX;
+    *y = g_mouseY;
+    return 1;
+}
+
+extern "C" int ps2_take_click(float* x, float* y)
+{
+    std::lock_guard<std::mutex> lock(g_typedLock);
+    if (g_clicks.empty())
+    {
+        return 0;
+    }
+    *x = g_clicks.front().first;
+    *y = g_clicks.front().second;
+    g_clicks.erase(g_clicks.begin());
+    return 1;
 }
 
 extern "C" int ps2_take_typed(char* out, int max)

@@ -189,6 +189,8 @@ void RenderFrame(std::function<void()> show);
 // --- input.cpp: port 0's controller from the keyboard, a gamepad and --press
 u32 ButtonsFromNames(const std::string& names);
 void InputInit();
+// Where the presenter shows the picture (render coordinates, the same as the mouse's events after conversion)
+void InputPicture(float x, float y, float w, float h);
 void InputEvent(const ::SDL_Event& e);
 void InputUpdate(double seconds, ::SDL_Window* window);
 
