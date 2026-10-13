@@ -6,11 +6,13 @@
 #include "../../hw/ee/gif.h"
 #include "../../hw/ee/vif.h"
 #include "../../hw/ee/vu.h"
+#include "../../hw/ee/vu1translate.h"
 #include "../../hw/gs/gs.h"
 #include "../../hw/png.h"
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -35,6 +37,8 @@ u64 g_siglblid = 0;
 u64 g_other[0x20] = {};
 u32 g_field = 0;
 u64 g_vblanks = 0;
+// The game's frames: the displayed buffer's changes (DISPFB written with a new value)
+std::atomic<u64> g_flips{0};
 
 std::mutex g_pictureLock;
 std::condition_variable g_pictureCv;
@@ -111,6 +115,11 @@ void GsInit()
                 q[5], q[6], q[7]);
         };
     }
+    else
+    {
+        // The game's VU1 programs run translated (the build made them from its executable; $PS2_VU1=interpret or verify)
+        Ee::AttachVu1Translation(*vu1);
+    }
     static int kickTrace = getenv("PS2_KICK_TRACE") != nullptr ? atoi(getenv("PS2_KICK_TRACE")) : 0;
     vu1->xgkick = [vu1, gif](u32 address) {
         if (kickTrace > 0)
@@ -182,9 +191,15 @@ void GsPrivWrite(u32 a, u64 v)
     case 0x12000000: gs.pmode.value = v; break;
     case 0x12000010: g_smode1 = v; break;
     case 0x12000020: gs.smode2.value = v; break;
-    case 0x12000070: gs.dispfb[0].value = v; break;
+    case 0x12000070:
+        g_flips += gs.dispfb[0].value != v;
+        gs.dispfb[0].value = v;
+        break;
     case 0x12000080: gs.display[0].value = v; break;
-    case 0x12000090: gs.dispfb[1].value = v; break;
+    case 0x12000090:
+        g_flips += gs.dispfb[1].value != v && !gs.pmode.en1;
+        gs.dispfb[1].value = v;
+        break;
     case 0x120000A0: gs.display[1].value = v; break;
     case 0x120000E0: gs.bgcolor = v; break;
     case 0x12001000:
@@ -285,6 +300,8 @@ void PresenterRun()
     double nextEvery = g_options.snapshotEvery;
     size_t nextAt = 0;
     double nextWatch = 0;
+    double nextFps = 1;
+    u64 lastFlips = 0, lastVblanks = 0;
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     SDL_Texture* texture = nullptr;
@@ -342,6 +359,15 @@ void PresenterRun()
                 nextAt++;
             }
         }
+        if (g_options.fps && t >= nextFps)
+        {
+            u64 flips = g_flips.load(), vblanks = g_vblanks;
+            Log("%.0f s: %llu frames, %llu vblanks", t, static_cast<unsigned long long>(flips - lastFlips),
+                static_cast<unsigned long long>(vblanks - lastVblanks));
+            lastFlips = flips;
+            lastVblanks = vblanks;
+            nextFps += 1;
+        }
         if (!g_options.watch.empty() && t >= nextWatch)
         {
             std::string line;
@@ -362,6 +388,12 @@ void PresenterRun()
         if (g_options.runSeconds > 0 && t >= g_options.runSeconds)
         {
             Log("ran %.0f s: stopping", t);
+            const Ee::Vu1TranslationStats& vs = Ee::GetVu1TranslationStats();
+            Log("VU1: %llu instructions translated, %llu interpreted%s", static_cast<unsigned long long>(vs.translatedInstructions),
+                static_cast<unsigned long long>(vs.interpretedInstructions),
+                vs.verifiedRuns != 0 ? (", " + std::to_string(vs.verifiedRuns) + " runs verified, " +
+                                        std::to_string(vs.differences) + " differences").c_str()
+                                     : "");
             KernelDumpThreads();
             break;
         }

@@ -144,6 +144,16 @@ the pipelines' timing. It is game-neutral: Twinsanity's own renderer reached it 
 The runtime wires it: VU1's XGKICK to the GIF, VU0's registers to the recompiled code, the GS's SIGNAL/FINISH to the CSR, and
 the PCRTC's picture to the presenter at each vblank (an SDL3 window, or PNGs with `--headless --snapshots`).
 
+### VU1's programs, translated
+
+A game's VU1 microcode is recompiled too: `recomp/vutranslate.py` reads the programs the executable's `.vutext` uploads (each
+DMA packet's MPGs), and makes C++ for each block of straight code once per pipeline state it can be entered with (what's in
+flight: FMAC results and their flags, Q, ILW's results, the branch read rule's old value), so the stalls and the flags'
+timing are worked out at build time. `hw/ee/vu1translate.cpp` finds the program micro memory holds wherever it was uploaded,
+enters the variant made for the interpreter's state, and hands the state back where there's none; the interpreter runs the
+rest. The results are the interpreter's bit for bit: `PS2_VU1=verify` runs both and compares every XGKICK's packet, and
+`PS2_VU1=interpret` turns the translation off. For WoC: 16 programs, 9,184 instructions, 99.6% of those run translated.
+
 ### Controllers and memory cards
 
 Port 0's controller is the keyboard and the first gamepad SDL3 finds (`input.cpp`: arrows the d-pad, W A S D and I J K L the
@@ -154,7 +164,8 @@ when its folder exists. A save is the game's own directory of files, as on the c
 
 ### Debugging
 
-`--watch ADDR[:WORDS],...` logs guest memory every `--watch-every` seconds; `--log` turns on the channels' logs.
+`--watch ADDR[:WORDS],...` logs guest memory every `--watch-every` seconds, `--fps` the game's frames and the vblanks of each
+second; `--log` turns on the channels' logs.
 
 ### Not done yet
 

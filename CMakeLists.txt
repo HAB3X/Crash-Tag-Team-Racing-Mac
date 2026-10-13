@@ -16,6 +16,7 @@ add_library(ps2hw STATIC
     hw/ee/gif.cpp
     hw/ee/vif.cpp
     hw/ee/vu.cpp
+    hw/ee/vu1translate.cpp
     hw/gs/gs.cpp
     hw/gs/gsdraw.cpp
     hw/gs/gsmemory.cpp
@@ -94,4 +95,19 @@ function(ps2_recompile target)
     # MIPS integer arithmetic wraps; the generated code is big, so it's optimised but not hard
     target_compile_options(${target} PRIVATE -O1 -fwrapv -fno-strict-aliasing -Wno-unused-label -Wno-unused-variable
                            -Wno-parentheses-equality -Wno-unused-value -Wno-tautological-compare)
+
+    # VU1's programs, translated from the executable's .vutext (recomp/vutranslate.py; hw/ee/vu1translate.h)
+    set(vu1 ${out}/vu1programs.cpp)
+    foreach(shard RANGE 7)
+        list(APPEND vu1 ${out}/vu1programs_${shard}.cpp)
+    endforeach()
+    add_custom_command(
+        OUTPUT ${vu1}
+        COMMAND ${PS2_PYTHON} ${PS2_RUNTIME_ROOT}/recomp/vutranslate.py ${elf} ${out}/vu1programs.cpp
+        DEPENDS ${elf} ${PS2_RUNTIME_ROOT}/recomp/vutranslate.py ${PS2_RUNTIME_ROOT}/recomp/vudecode.py
+        COMMENT "Translating ${ARG_EXECUTABLE}'s VU1 programs"
+        VERBATIM)
+    target_sources(${target} PRIVATE ${vu1})
+    set_source_files_properties(${vu1} PROPERTIES COMPILE_OPTIONS
+        "-O2;-g0;-std=c++20;-ffp-contract=off;-fno-strict-float-cast-overflow;-Wno-unused-variable;-Wno-unused-label;-Wno-unused-but-set-variable")
 endfunction()

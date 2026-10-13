@@ -145,6 +145,8 @@ struct Options
     // Guest words logged every watchEvery seconds: (address, count)
     std::vector<std::pair<u32, u32>> watch;
     double watchEvery = 1;
+    // The game's frames and the vblanks of every second to the log
+    bool fps = false;
     // The memory cards' folders (port0, port1 in it)
     std::string memcardDir;
     // Buttons pressed at given times (seconds): port 0's PS2 button bits, held for a while

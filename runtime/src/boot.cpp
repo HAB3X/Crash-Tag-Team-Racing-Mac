@@ -19,7 +19,8 @@ void Usage(const char* program)
     fprintf(stderr,
             "usage: %s --disc IMAGE [--headless] [--snapshots DIR] [--snapshot-every S] [--snapshot-at S,S,...]\n"
             "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq]\n"
-            "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--press S:BUTTON[+BUTTON][:HOLD],...]\n",
+            "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--press S:BUTTON[+BUTTON][:HOLD],...]\n"
+            "          [--fps]\n",
             program);
 }
 
@@ -156,6 +157,10 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
                 }
                 start = comma + 1;
             }
+        }
+        else if (a == "--fps")
+        {
+            g_options.fps = true;
         }
         else if (a == "--watch-every")
         {

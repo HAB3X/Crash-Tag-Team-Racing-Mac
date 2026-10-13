@@ -9,8 +9,8 @@
 // cycle. Floats follow the VU's: denormals are zero, overflow clamps to the largest float, results round toward zero.
 //
 // The programs themselves are the game's (its .vutext, loaded by the renderer's MPG uploads); this is only the processor.
-// VU1's programs mostly run translated (vu1translate.h, native/GRAPHICS.md's "VU1 translation"): the same state, the same
-// results, from C++ made of the game's microcode at build time; the interpreter runs what isn't translated.
+// VU1's programs mostly run translated (vu1translate.h): the same state, the same results, from C++ made of the game's
+// microcode at build time; the interpreter runs what isn't translated.
 
 #include "common.h"
 
@@ -120,7 +120,7 @@ public:
     void EndMicro(VuMicroState& state);
     // The pipelines' results due at the state's cycle made visible
     void FlushPipes(VuMicroState& state);
-    // The interpreter alone (TWIN_VU1=interpret makes every run this)
+    // The interpreter alone ($PS2_VU1=interpret makes every run this)
     void RunInterpreted(u32 start);
     // Where the last program stopped (MSCNT goes on from there)
     u32 pc() const { return pc_; }
