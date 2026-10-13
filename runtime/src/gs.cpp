@@ -40,7 +40,7 @@ std::atomic<u64> g_siglblid{0};
 u64 g_pmode = 0, g_smode2 = 0, g_dispfb[2] = {}, g_display[2] = {}, g_bgcolor = 0;
 u64 g_other[0x20] = {};
 u32 g_field = 0;
-u64 g_vblanks = 0;
+std::atomic<u64> g_vblanks{0};
 // The game's frames: the displayed buffer's changes (DISPFB written with a new value)
 std::atomic<u64> g_flips{0};
 
@@ -350,6 +350,7 @@ void PresenterRun()
             SDL_SetRenderVSync(renderer, 1);
         }
     }
+    InputInit();
     u64 shown = 0;
     for (;;)
     {
@@ -370,19 +371,22 @@ void PresenterRun()
             }
         }
         double t = std::chrono::duration<double>(clock::now() - start).count();
-        InputUpdate(t, window != nullptr);
+        // The scripted presses and the pictures go by the game's time (its vblanks), which a script can count on: the
+        // wall clock's runs differ with how fast the host draws and loads
+        double game = static_cast<double>(g_vblanks.load()) / 59.94;
+        InputUpdate(game, window);
         if (image.width != 0 && !g_options.snapshotDir.empty())
         {
             char name[64];
-            if (g_options.snapshotEvery > 0 && t >= nextEvery)
+            if (g_options.snapshotEvery > 0 && game >= nextEvery)
             {
-                snprintf(name, sizeof(name), "t%06.1f.png", t);
+                snprintf(name, sizeof(name), "t%06.1f.png", game);
                 SavePicture(image, name);
-                snprintf(name, sizeof(name), "t%06.1f-buffer.png", t);
+                snprintf(name, sizeof(name), "t%06.1f-buffer.png", game);
                 SavePicture(buffer, name);
                 nextEvery += g_options.snapshotEvery;
             }
-            while (nextAt < g_options.snapshotAt.size() && t >= g_options.snapshotAt[nextAt])
+            while (nextAt < g_options.snapshotAt.size() && game >= g_options.snapshotAt[nextAt])
             {
                 snprintf(name, sizeof(name), "at%06.1f.png", g_options.snapshotAt[nextAt]);
                 SavePicture(image, name);

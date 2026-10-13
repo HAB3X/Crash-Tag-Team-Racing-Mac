@@ -170,11 +170,17 @@ rest. The results are the interpreter's bit for bit: `PS2_VU1=verify` runs both 
 
 ### Controllers and memory cards
 
-Port 0's controller is the keyboard and the first gamepad SDL3 finds (`input.cpp`: arrows the d-pad, W A S D and I J K L the
-sticks, Return start, Backspace select, X C Z V cross circle square triangle, Q E L1 R1, 1 3 L2 R2), plus presses scripted
-with `--press 30:start,31:cross` for headless runs. The memory cards are folders, `port0` and `port1`, in `--memcards DIR`
-(by default `~/Library/Application Support/PS2 Native Runtime/<executable>/memcards`): port 0's card is always in, port 1's
-when its folder exists. A save is the game's own directory of files, as on the card.
+Port 0's controller is the keyboard and mouse, and the first gamepad SDL3 finds (`input.cpp`). The keyboard and mouse defaults
+are the Crash Twinsanity native port's PC controls: W A S D move (a stick, diagonals as a stick's), Space is cross, the mouse's
+left button or J square, Left Shift or K circle, Tab or I triangle, Z and C the shoulders, Escape or Return start, Left Ctrl
+toggles walking, Q and E the right stick, and the arrows the d-pad; every one can be changed in the settings folder's
+`bindings.txt` (written with the defaults the first time). A game can take typed text (its `typing` hook): the keyboard then
+types instead (`ps2_take_typed`), and the game's `vblank` hook puts it in its memory. Presses can be scripted with `--press
+30:start,31:cross` and typing with `--type 41:NAME<enter>` for headless runs. Scripted presses and
+`--snapshot-every`/`--snapshot-at` count the game's time (its vblanks), not the wall clock's, so a script lands on the same
+frames however fast the host draws and loads. The memory cards are folders, `port0` and `port1`, in `--memcards DIR` (by default
+`~/Library/Application Support/PS2 Native Runtime/<executable>/memcards`): port 0's card is always in, port 1's when its folder
+exists. A save is the game's own directory of files, as on the card.
 
 ### Debugging
 

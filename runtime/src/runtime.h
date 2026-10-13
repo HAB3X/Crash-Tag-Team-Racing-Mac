@@ -15,6 +15,7 @@
 #endif
 
 union SDL_Event;
+struct SDL_Window;
 
 namespace Gs
 {
@@ -150,7 +151,7 @@ struct Options
     std::string disc;
     bool headless = false;
     std::string snapshotDir;
-    double snapshotEvery = 0;   // seconds between saved pictures (0: none)
+    double snapshotEvery = 0;   // seconds of game time (vblanks / 59.94) between saved pictures (0: none); --snapshot-at too
     std::vector<double> snapshotAt;
     double runSeconds = 0;      // stop after this long (0: never)
     u32 logMask = 0;
@@ -159,9 +160,10 @@ struct Options
     double watchEvery = 1;
     // The game's frames and the vblanks of every second to the log
     bool fps = false;
-    // The memory cards' folders (port0, port1 in it)
+    // The memory cards' folders (port0, port1 in it), and the settings' (bindings.txt)
     std::string memcardDir;
-    // Buttons pressed at given times (seconds): port 0's PS2 button bits, held for a while
+    std::string settingsDir;
+    // Buttons pressed at given times (seconds of game time): port 0's PS2 button bits, held for a while
     struct Press
     {
         double at;
@@ -169,6 +171,8 @@ struct Options
         u32 buttons;
     };
     std::vector<Press> presses;
+    // Text typed at given times (seconds of game time), as the keyboard types it while the game takes text
+    std::vector<std::pair<double, std::string>> typed;
 };
 extern Options g_options;
 
@@ -184,8 +188,9 @@ void RenderFrame(std::function<void()> show);
 
 // --- input.cpp: port 0's controller from the keyboard, a gamepad and --press
 u32 ButtonsFromNames(const std::string& names);
+void InputInit();
 void InputEvent(const ::SDL_Event& e);
-void InputUpdate(double seconds, bool window);
+void InputUpdate(double seconds, ::SDL_Window* window);
 
 // --- disc.cpp
 bool DiscOpen(const std::string& path);

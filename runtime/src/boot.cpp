@@ -11,6 +11,7 @@
 namespace Ps2
 {
 extern u32 g_entryPoint;
+const Ps2GameInfo* g_game = nullptr;
 
 namespace
 {
@@ -20,6 +21,7 @@ void Usage(const char* program)
             "usage: %s --disc IMAGE [--headless] [--snapshots DIR] [--snapshot-every S] [--snapshot-at S,S,...]\n"
             "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq]\n"
             "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--press S:BUTTON[+BUTTON][:HOLD],...]\n"
+            "          [--type S:TEXT]\n"
             "          [--fps]\n",
             program);
 }
@@ -192,6 +194,24 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
                 start = comma + 1;
             }
         }
+        else if (a == "--type")
+        {
+            // 41:CRASH<enter> (<enter> and <back> for Return and Backspace)
+            std::string item = next();
+            size_t colon = item.find(':');
+            if (colon != std::string::npos)
+            {
+                std::string text = item.substr(colon + 1);
+                for (auto [token, ch] : {std::pair<std::string, char>{"<enter>", '\r'}, {"<back>", '\b'}})
+                {
+                    for (size_t at; (at = text.find(token)) != std::string::npos;)
+                    {
+                        text.replace(at, token.size(), 1, ch);
+                    }
+                }
+                g_options.typed.emplace_back(atof(item.substr(0, colon).c_str()), text);
+            }
+        }
         else if (a == "--memcards")
         {
             g_options.memcardDir = next();
@@ -220,12 +240,14 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
         return 2;
     }
     g_logMask = g_options.logMask;
+    g_game = game;
+    // ~/Library/Application Support/PS2 Native Runtime/<the executable>/: the settings, and the memory cards in memcards/
+    const char* home = getenv("HOME");
+    g_options.settingsDir =
+        std::string(home != nullptr ? home : ".") + "/Library/Application Support/PS2 Native Runtime/" + game->executable;
     if (g_options.memcardDir.empty())
     {
-        // ~/Library/Application Support/PS2 Native Runtime/<the executable>/
-        const char* home = getenv("HOME");
-        g_options.memcardDir = std::string(home != nullptr ? home : ".") +
-                               "/Library/Application Support/PS2 Native Runtime/" + game->executable + "/memcards";
+        g_options.memcardDir = g_options.settingsDir + "/memcards";
     }
 
     MemoryInit();

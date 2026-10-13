@@ -12,6 +12,8 @@
 // its own register context and stack.
 #include "runtime.h"
 
+#include "ps2/runtime.h"
+
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -25,6 +27,7 @@ volatile int ps2_irq_pending = 0;
 
 namespace Ps2
 {
+extern const Ps2GameInfo* g_game;
 thread_local Ps2Cpu* t_cpu = nullptr;
 u32 g_intcStat = 0;
 u32 g_intcMask = 0;
@@ -323,6 +326,10 @@ void ServiceLocked(std::unique_lock<std::mutex>& lock)
         lock.unlock();
         GsVblank(true);
         PadVblank();
+        if (g_game != nullptr && g_game->vblank != nullptr)
+        {
+            g_game->vblank();
+        }
         lock.lock();
         g_intcStat |= 1u << 2;
         if (g_vsyncFlag != 0)
