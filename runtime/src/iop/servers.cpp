@@ -274,6 +274,40 @@ void Cdvd(RpcCall& c)
         c.Out32(0, 1);
         return;
     }
+    case 0x80000595: // N commands
+        switch (c.fno)
+        {
+        case 0x01: // read: lsn, sectors, the EE's buffer, the mode (tries, spindle, sector size), the unaligned ends' buffer
+                   // (left empty: the sectors go straight in), a progress word
+        {
+            u32 lsn = c.In32(0);
+            u32 sectors = c.In32(4);
+            u32 dest = c.In32(8) & 0x1FFFFFF;
+            u32 pattern = (c.In32(12) >> 16) & 0xFF;
+            u32 ends = c.In32(16) & 0x1FFFFFF;
+            if (pattern != 0 && Once("cd read pattern"))
+            {
+                Log("cdvd read: sector size pattern %u read as 2048 byte sectors", pattern);
+            }
+            if (ends != 0)
+            {
+                std::memset(Host(ends), 0, 16);
+            }
+            if (dest + sectors * 2048 <= RamSize)
+            {
+                DiscReadSectors(lsn, sectors, Host(dest));
+            }
+            PS2_LOG(LogIop, "cdvd read %u sectors from %u to %08x", sectors, lsn, dest);
+            c.Out32(0, 1);
+            return;
+        }
+        case 0x0E: // the drive's state before a read (6 would stop it): a PS2 CD's
+            c.Out32(0, 0x12);
+            return;
+        default:
+            break;
+        }
+        break;
     case 0x80000593: // S commands
         switch (c.fno)
         {

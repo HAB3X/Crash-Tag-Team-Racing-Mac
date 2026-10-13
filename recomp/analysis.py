@@ -247,6 +247,13 @@ class Program:
         not_starts |= jt_targets
         starts |= self.computed_starts
         pointers = self.data_pointers() - jt_targets
+        # A switch's cases are one function's labels: a data word that points between them (a number in a table that looks
+        # like an address) isn't a function start unless something calls it. Split there, the function would lose the cases
+        # past the split (WoC's menu drawing: a sound table's 0x1E7F00 in the middle of a 35 case switch)
+        called = {i.target for i in self.insns if i.kind == "call"}
+        for jr, targets in self.jump_tables.items():
+            low, high = min(min(targets), jr), max(targets)
+            pointers -= {p for p in pointers if low < p <= high and p not in called}
         starts = {s for s in starts if self.in_text(s)} - not_starts
         starts |= pointers
         cache = {}

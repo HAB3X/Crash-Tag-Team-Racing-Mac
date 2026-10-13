@@ -43,10 +43,13 @@ The retail executables are stripped. Function starts are:
 - where control runs past a region's end (after a call whose delay slot is the region's last instruction)
 - the config's `extra` starts; `not` removes false ones
 
+A data word inside a switch's span of cases is never a start unless something calls it: a number that looks like an
+address would otherwise split the function and cut it off from its cases.
+
 The text is cut at the starts, each region's control flow followed from its start, and the rules repeated until nothing changes.
 Jump tables (`lui`/`addiu`/`addu`/`lw`/`jr`, with the `sltiu` bound) are found by walking back from each `jr`. Hand-written
 code that jumps into an unrolled block (`lui`+`addi` base plus an index) gets every instruction of the block as a target. For WoC:
-3,980 functions, 136 jump tables, no unresolved `jr`.
+3,956 functions, 136 jump tables, no unresolved `jr`.
 
 ### Translation (`codegen.py`)
 
