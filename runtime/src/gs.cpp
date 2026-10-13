@@ -29,11 +29,15 @@ Options g_options;
 namespace
 {
 Hardware g_hw;
-u64 g_csr = 0;
+// CSR's SIGNAL, FINISH and VSINT bits: set from the render thread (render.cpp) as well as the game's
+std::atomic<u64> g_csr{0};
 u64 g_imr = 0xFF00;
 u64 g_smode1 = 0;
 u64 g_busdir = 0;
-u64 g_siglblid = 0;
+std::atomic<u64> g_siglblid{0};
+// The privileged registers the PCRTC reads, as the game last wrote them: the GS's own copies are set in order with the drawing
+// (on the render thread), these answer the game's reads at once
+u64 g_pmode = 0, g_smode2 = 0, g_dispfb[2] = {}, g_display[2] = {}, g_bgcolor = 0;
 u64 g_other[0x20] = {};
 u32 g_field = 0;
 u64 g_vblanks = 0;
@@ -54,7 +58,7 @@ void GsEvent(u32 address, u64 value)
     switch (address)
     {
     case Gs::SIGNAL:
-        g_siglblid = (g_siglblid & ~0xFFFFFFFFull) | (value & 0xFFFFFFFF);
+        g_siglblid = (g_siglblid.load() & ~0xFFFFFFFFull) | (value & 0xFFFFFFFF);
         g_csr |= 1;
         if (!(g_imr & 0x100))
         {
@@ -69,7 +73,7 @@ void GsEvent(u32 address, u64 value)
         }
         break;
     case Gs::LABEL:
-        g_siglblid = (g_siglblid & 0xFFFFFFFFull) | (value << 32);
+        g_siglblid = (g_siglblid.load() & 0xFFFFFFFFull) | (value << 32);
         break;
     }
 }
@@ -148,28 +152,30 @@ void GsInit()
     ps2_vu0 = reinterpret_cast<Ps2Vu0Regs*>(&g_hw.vu0->vf[0]);
     ps2_vu0_mem = g_hw.vu0->data();
     ps2_vu0->vf[0].f[3] = 1.0f;
+    RenderStart();
 }
 
 u64 GsCsr()
 {
     // FIELD (bit 13), the FIFO empty (bits 14-15 = 01), REV 0x1B and ID 0x55
-    return g_csr | (static_cast<u64>(g_field) << 13) | (1ull << 14) | (0x551Bull << 16);
+    return g_csr.load() | (static_cast<u64>(g_field) << 13) | (1ull << 14) | (0x551Bull << 16);
 }
 
 u64 GsPrivRead(u32 a)
 {
-    Gs::Gs& gs = *g_hw.gs;
     switch (a & 0x1FFFFFF8)
     {
-    case 0x12000000: return gs.pmode.value;
+    case 0x12000000: return g_pmode;
     case 0x12000010: return g_smode1;
-    case 0x12000020: return gs.smode2.value;
-    case 0x12000070: return gs.dispfb[0].value;
-    case 0x12000080: return gs.display[0].value;
-    case 0x12000090: return gs.dispfb[1].value;
-    case 0x120000A0: return gs.display[1].value;
-    case 0x120000E0: return gs.bgcolor;
+    case 0x12000020: return g_smode2;
+    case 0x12000070: return g_dispfb[0];
+    case 0x12000080: return g_display[0];
+    case 0x12000090: return g_dispfb[1];
+    case 0x120000A0: return g_display[1];
+    case 0x120000E0: return g_bgcolor;
     case 0x12001000:
+        // The game may be waiting for a FINISH or SIGNAL in data the render thread hasn't been handed yet
+        RenderFlush();
         if (ps2_irq_pending && t_cpu != nullptr)
         {
             ps2_irq_service(t_cpu);
@@ -184,24 +190,41 @@ u64 GsPrivRead(u32 a)
 
 void GsPrivWrite(u32 a, u64 v)
 {
-    Gs::Gs& gs = *g_hw.gs;
+    Gs::Gs* gs = g_hw.gs;
     PS2_LOG(LogGs, "GS %08x = %016llx", a, static_cast<unsigned long long>(v));
     switch (a & 0x1FFFFFF8)
     {
-    case 0x12000000: gs.pmode.value = v; break;
+    case 0x12000000:
+        g_pmode = v;
+        RenderCall([gs, v] { gs->pmode.value = v; });
+        break;
     case 0x12000010: g_smode1 = v; break;
-    case 0x12000020: gs.smode2.value = v; break;
+    case 0x12000020:
+        g_smode2 = v;
+        RenderCall([gs, v] { gs->smode2.value = v; });
+        break;
     case 0x12000070:
-        g_flips += gs.dispfb[0].value != v;
-        gs.dispfb[0].value = v;
+        g_flips += g_dispfb[0] != v;
+        g_dispfb[0] = v;
+        RenderCall([gs, v] { gs->dispfb[0].value = v; });
         break;
-    case 0x12000080: gs.display[0].value = v; break;
+    case 0x12000080:
+        g_display[0] = v;
+        RenderCall([gs, v] { gs->display[0].value = v; });
+        break;
     case 0x12000090:
-        g_flips += gs.dispfb[1].value != v && !gs.pmode.en1;
-        gs.dispfb[1].value = v;
+        g_flips += g_dispfb[1] != v && !(g_pmode & 1);
+        g_dispfb[1] = v;
+        RenderCall([gs, v] { gs->dispfb[1].value = v; });
         break;
-    case 0x120000A0: gs.display[1].value = v; break;
-    case 0x120000E0: gs.bgcolor = v; break;
+    case 0x120000A0:
+        g_display[1] = v;
+        RenderCall([gs, v] { gs->display[1].value = v; });
+        break;
+    case 0x120000E0:
+        g_bgcolor = v;
+        RenderCall([gs, v] { gs->bgcolor = v; });
+        break;
     case 0x12001000:
         // SIGNAL, FINISH, HSINT, VSINT and EDWINT are cleared by ones
         g_csr &= ~(v & 0x1F);
@@ -220,8 +243,11 @@ void GsPrivWrite(u32 a, u64 v)
 void GsSetCrt(u32 interlaced, u32 mode, u32 field)
 {
     PS2_LOG(LogGs, "SetGsCrt interlaced %u mode %u field %u", interlaced, mode, field);
-    g_hw.gs->smode2.interlaced = interlaced & 1;
-    g_hw.gs->smode2.ffmd = field & 1;
+    // SMODE2: INT (bit 0), FFMD (bit 1)
+    g_smode2 = (g_smode2 & ~3ull) | (interlaced & 1) | ((field & 1) << 1);
+    Gs::Gs* gs = g_hw.gs;
+    u64 v = g_smode2;
+    RenderCall([gs, v] { gs->smode2.value = v; });
 }
 
 void GsVblank(bool start)
@@ -243,8 +269,12 @@ void GsVblank(bool start)
     {
         want = true;
     }
-    if (want)
+    if (!want)
     {
+        return;
+    }
+    // Read on the GS's side once it has drawn what came before (the game's thread goes on, at most two pictures ahead)
+    RenderFrame([] {
         Gs::DisplayImage image;
         g_hw.gs->ReadDisplay(image);
         Gs::DisplayImage buffer;
@@ -270,7 +300,7 @@ void GsVblank(bool start)
         g_buffer = std::move(buffer);
         g_pictureSerial++;
         g_pictureCv.notify_all();
-    }
+    });
 }
 
 void PresenterStop()

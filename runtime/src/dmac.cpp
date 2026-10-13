@@ -363,6 +363,8 @@ void Start(int ch)
         RunInterleave(ch, c);
     }
     c.chcr &= ~0x100u;
+    // The transfer's GS data handed to the render thread now (the game may wait for what it draws)
+    RenderFlush();
     RaiseDmac(static_cast<u32>(ch));
 }
 }

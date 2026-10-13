@@ -280,6 +280,7 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
     Log("starting %s at %08x", game->title, g_entryPoint);
 
     std::thread ee([] {
+        ThreadOnPerformanceCores();
         KernelRunMain();
         PresenterStop();
     });

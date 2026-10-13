@@ -7,8 +7,12 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
+#if defined(__APPLE__)
+#include <pthread.h>
+#endif
 
 union SDL_Event;
 
@@ -25,6 +29,14 @@ class Gif;
 
 namespace Ps2
 {
+// The calling thread kept on the performance cores (macOS puts busy threads of the default class on the efficiency cores too)
+inline void ThreadOnPerformanceCores()
+{
+#if defined(__APPLE__)
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+}
+
 // --- log.cpp
 enum LogChannel
 {
@@ -159,6 +171,16 @@ struct Options
     std::vector<Press> presses;
 };
 extern Options g_options;
+
+// --- render.cpp: the GS's side on a thread of its own
+void RenderStart();
+// Work on the GS's side in its place among the queued data (at once when there's no render thread)
+void RenderCall(std::function<void()> work);
+// What's queued handed over; everything queued done
+void RenderFlush();
+void RenderSync();
+// A picture made on the GS's side; returns once the render thread is at most two pictures behind
+void RenderFrame(std::function<void()> show);
 
 // --- input.cpp: port 0's controller from the keyboard, a gamepad and --press
 u32 ButtonsFromNames(const std::string& names);

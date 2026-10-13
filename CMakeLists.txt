@@ -39,6 +39,7 @@ add_library(ps2runtime STATIC
     runtime/src/kernel.cpp
     runtime/src/log.cpp
     runtime/src/memory.cpp
+    runtime/src/render.cpp
     runtime/src/mmi.c
     runtime/src/iop/sif.cpp
     runtime/src/iop/mcserv.cpp

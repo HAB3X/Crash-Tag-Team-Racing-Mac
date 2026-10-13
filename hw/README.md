@@ -21,4 +21,7 @@ here unchanged except for:
 - `ee/vu.cpp`: LQI, LQD, SQI and SQD's increments and decrements keep the register's old value for the branch read rule, as
   the integer ALU's writes do (Wrath of Cortex's model program loops forever otherwise)
 
+- `gs/workers.cpp`: the workers ask macOS for the performance cores (QoS user interactive): rows are shared out evenly, so
+  a worker on an efficiency core held every primitive up
+
 Fixes made in either place should be copied to the other.

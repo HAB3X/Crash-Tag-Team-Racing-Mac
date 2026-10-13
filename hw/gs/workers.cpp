@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cstdlib>
+#if defined(__APPLE__)
+#include <pthread.h>
+#endif
 
 namespace Gs
 {
@@ -17,7 +20,13 @@ Workers::Workers()
     unsigned workers = cores > 2 ? std::min(cores - 2, 7u) : 0;
     for (unsigned i = 0; i < workers; i++)
     {
-        threads_.emplace_back([this, i] { Run(i + 1); });
+        threads_.emplace_back([this, i] {
+#if defined(__APPLE__)
+            // On the performance cores: the rows are shared out evenly, so one slow core holds every primitive up
+            pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+            Run(i + 1);
+        });
     }
 }
 

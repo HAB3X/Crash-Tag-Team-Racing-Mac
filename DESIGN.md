@@ -147,6 +147,17 @@ the pipelines' timing. It is game-neutral: Twinsanity's own renderer reached it 
 The runtime wires it: VU1's XGKICK to the GIF, VU0's registers to the recompiled code, the GS's SIGNAL/FINISH to the CSR, and
 the PCRTC's picture to the presenter at each vblank (an SDL3 window, or PNGs with `--headless --snapshots`).
 
+### The render thread
+
+The GS's side (the GIF's paths, the GS's registers, local memory, drawing and the PCRTC's picture) runs on a thread of its
+own (`render.cpp`, from the Twinsanity port's): what reaches the GIF is copied into a queue the render thread plays back in
+order, the privileged registers the PCRTC reads are answered from copies at once and set on the GS in their place in the
+queue, and SIGNAL and FINISH reach the INTC when the render thread gets to them. The queue is handed over at the end of each
+DMA transfer and whenever the game reads CSR, and the game's thread stays at most two pictures ahead. Every working thread
+asks macOS for the performance cores: left to the default class, about a third of the time ran on the efficiency cores.
+With both, WoC's 3D scenes went from 16-20 frames a second to the full 60. `PS2_RENDER_THREAD=0` keeps the GS on the
+game's thread.
+
 ### VU1's programs, translated
 
 A game's VU1 microcode is recompiled too: `recomp/vutranslate.py` reads the programs the executable's `.vutext` uploads (each
