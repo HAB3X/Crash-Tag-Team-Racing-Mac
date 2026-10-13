@@ -133,11 +133,28 @@ time). RPC servers stand in for the modules:
 | cdvd (0x80000592-0x8000059C) | init, media mode, disk type, disk ready, search file |
 | padman (0x80000100) | SDK 2.x libpad: port open/close, main mode, pressure mode, actuators; port 0 has a DualShock 2 whose two frames in EE memory are rewritten at every vblank (`iop/padman.cpp`) |
 | mcserv (0x80000400) | the libmc of SDKs before 2.6: init, info, open, close, seek, read, write, flush, chdir, getdir, set file info, delete, format; each port's card is a host folder (`iop/mcserv.cpp`) |
-| libsd/sdrdrv | answered with zeros: no sound yet |
-| a game's own modules | registered by the game (`ps2/iop.h`): WoC's NUSOUND |
+| sdrdrv | answered with zeros: no game has needed libsd's RPC server yet |
+| a game's own modules | registered by the game (`ps2/iop.h`): WoC's NUSOUND, which drives the SPU2 through libsd (`ps2/sound.h`, below) |
 
 The alternative, emulating the IOP's MIPS R3000 and running the real IRX modules, would bring sound and pads for free but needs an
 IOP CPU, its kernel and the SPU2 timing; it can come later behind the same SIF interface.
+
+### Sound (`sound/`)
+
+The SPU2 is emulated at its registers (`sound/spu2.cpp`, from the Crash Twinsanity native port, which also emulates the IOP and
+runs the real modules there; copied with its origin noted in `spu2.h`): two cores of 24 voices playing PS-ADPCM out of 2 MB of
+sound memory, the blocks' loop flags, the gaussian interpolation, the pitch counter, ADSR envelopes and volume sweeps, key on
+and off, ENDX, the reverb, the cores' mixing. A game's sound driver, standing in for its IOP module as an RPC server, drives it
+the way the module would through libsd (`ps2/sound.h`; `sound/libsd.cpp` makes the register writes LIBSD.IRX makes, read from
+its code: each entry's register, the address registers' halves, sceSdInit's set-up) and transfers sample data straight into the
+sound memory (sceSdVoiceTrans, done at once).
+
+The output (`sound/output.cpp`) is 48 kHz stereo through an SDL3 audio stream whose callback makes the samples SDL asks for, on
+SDL's audio thread; with no device (`--headless`, `--mute`) a thread of its own makes them at the wall clock's pace. A driver's
+own thread (the module's, woken by the IOP's hardware timer) is a function the runtime runs every so many samples
+(`SoundSetTimer`), so it sees the voices where they are in the sound it's making. The SPU2 and the driver's state belong to
+whoever holds the sound lock: the making of a few hundred samples at a time, or the RPC server answering a call on the game's
+thread; neither waits for anything else. `--audio-dump FILE.wav` writes everything made to a WAV file.
 
 ### Graphics (`hw/`)
 
@@ -185,11 +202,11 @@ exists. A save is the game's own directory of files, as on the card.
 ### Debugging
 
 `--watch ADDR[:WORDS],...` logs guest memory every `--watch-every` seconds, `--fps` the game's frames and the vblanks of each
-second; `--log` turns on the channels' logs.
+second; `--log` turns on the channels' logs; `--audio-dump FILE.wav` keeps the sound.
 
 ### Not done yet
 
-Sound (SPU2 and the game's sound driver), rumble, the memory card's newer protocol (libmc 2.6 on), movies (IPU), MFIFO, the VU flags in macro mode, the FPU's
+The SPU2's DMA timing and AutoDMA input from the IOP's side (no driver uses them yet), libsd's reverb presets, rumble, the memory card's newer protocol (libmc 2.6 on), movies (IPU), MFIFO, the VU flags in macro mode, the FPU's
 exact rounding, and the OpenGL renderer's hookup (the software GS draws).
 
 ## Repositories and licences
