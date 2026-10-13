@@ -85,6 +85,8 @@ void RaiseIntc(u32 cause);
 void RaiseDmac(u32 channel);
 // A semaphore signalled from outside the guest (the IOP's completions); the scheduler picks it up at the next kernel call
 void KernelSignalSema(int id);
+// Every thread's state to the log
+void KernelDumpThreads();
 // The INTC's and DMAC's registers
 extern u32 g_intcStat;
 extern u32 g_intcMask;

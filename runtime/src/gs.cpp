@@ -343,6 +343,7 @@ void PresenterRun()
         if (g_options.runSeconds > 0 && t >= g_options.runSeconds)
         {
             Log("ran %.0f s: stopping", t);
+            KernelDumpThreads();
             break;
         }
         if (window != nullptr)

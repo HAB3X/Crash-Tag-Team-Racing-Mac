@@ -920,6 +920,26 @@ bool InInterrupt() { return g_inInterrupt > 0; }
 
 bool InterruptsEnabled() { return g_interruptsEnabled; }
 
+void KernelDumpThreads()
+{
+    std::lock_guard<std::mutex> lock(g_lock);
+    for (auto& [id, t] : g_threads)
+    {
+        const char* st = t->state == State::Running ? "running" : t->state == State::Ready ? "ready"
+                         : t->state == State::Waiting ? "waiting" : "dormant";
+        Log("thread %d: %s%s priority %d entry %08x wait %s sema %d wakeups %d", id, st, t->suspended ? " suspended" : "",
+            t->priority, t->entry, t->wait == WaitKind::Sleep ? "sleep" : t->wait == WaitKind::Sema ? "sema" : "-",
+            t->waitSema, t->wakeups);
+    }
+    for (auto& [id, s] : g_semas)
+    {
+        if (!s->waiters.empty())
+        {
+            Log("sema %d: count %d, %zu waiting", id, s->count, s->waiters.size());
+        }
+    }
+}
+
 void KernelSignalSema(int id)
 {
     std::lock_guard<std::mutex> lock(g_lock);
