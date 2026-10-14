@@ -1268,6 +1268,21 @@ private:
         }
     };
     std::unordered_map<std::tuple<u32, u32, u32, u32, u32>, Gs::PageSet, LevelKeyHash> levelPages_;
+    // A texture level's whole pages (levelPages_)
+    const Gs::PageSet& LevelPages(const Gs::TextureLevel& level)
+    {
+        auto key = std::make_tuple(level.bp, level.bw, level.psm, level.width, level.height);
+        auto found = levelPages_.find(key);
+        if (found == levelPages_.end())
+        {
+            Gs::PageSet whole;
+            Gs::PagesOfRect(level.psm, level.bp, level.bw, 0, 0, static_cast<s32>(level.width) - 1, static_cast<s32>(level.height) - 1,
+                            whole);
+            found = levelPages_.emplace(key, whole).first;
+        }
+
+        return found->second;
+    }
     std::map<std::pair<Target*, Target*>, GLuint> framebuffers_;
     std::unordered_map<u32, Program> programs_;
     std::unordered_map<const void*, CachedTexture> textures_;
@@ -4170,10 +4185,14 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
             // Decoded on the GPU from memory's copy
             decodeRect = {left, top, right, bottom};
             texture = DecodeOnGpu(state, left, top, right, bottom, colour);
-            // Decoded from memory read back from an upscaled target: its texels are the blocks' first samples
-            Gs::PageSet texturePages;
-            Gs::PagesOfRect(level.psm, level.bp, level.bw, left, top, right, bottom, texturePages);
-            textureFromScaled = (texturePages & scaledPages_).any();
+            // Decoded from memory read back from an upscaled target: its texels are the blocks' first samples (the region's
+            // pages looked for only when the whole texture has some: a region a draw is many pages' walk)
+            if ((LevelPages(level) & scaledPages_).any())
+            {
+                Gs::PageSet texturePages;
+                Gs::PagesOfRect(level.psm, level.bp, level.bw, left, top, right, bottom, texturePages);
+                textureFromScaled = (texturePages & scaledPages_).any();
+            }
             // The filtering setting (the game's textures, not its buffers read as other texels: their neighbours are other
             // pixels' bytes)
             if (g_FilterMode >= 1 && !textureFromScaled)
@@ -4194,18 +4213,7 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
                 bool synced = true;
                 for (u32 i = 0; i < state.levelCount && synced; i++)
                 {
-                    const Gs::TextureLevel& lv = state.levels[i];
-                    auto levelKey = std::make_tuple(lv.bp, lv.bw, lv.psm, lv.width, lv.height);
-                    auto found = levelPages_.find(levelKey);
-                    if (found == levelPages_.end())
-                    {
-                        Gs::PageSet whole;
-                        Gs::PagesOfRect(lv.psm, lv.bp, lv.bw, 0, 0, static_cast<s32>(lv.width) - 1, static_cast<s32>(lv.height) - 1,
-                                        whole);
-                        found = levelPages_.emplace(levelKey, whole).first;
-                    }
-
-                    synced = (found->second & newestMask_).none();
+                    synced = (LevelPages(state.levels[i]) & newestMask_).none();
                 }
 
                 if (!synced)
