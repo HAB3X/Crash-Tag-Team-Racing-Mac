@@ -108,10 +108,10 @@ void SDLCALL Callback(void*, SDL_AudioStream* stream, int additional, int)
     }
 }
 
-// Without a device: the wall clock's samples, a little ahead
+// Without a device: the wall clock's samples, a little ahead. Between steps the lock is let go of and the thread yields, so
+// a server waiting for it gets it even while the thread catches up
 void Thread()
 {
-    ThreadOnPerformanceCores();
     s16 buffer[StepFrames * 2];
     auto start = std::chrono::steady_clock::now();
     u64 made = 0;
@@ -122,6 +122,7 @@ void Thread()
         {
             Make(buffer, StepFrames);
             made += StepFrames;
+            std::this_thread::yield();
             continue;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
