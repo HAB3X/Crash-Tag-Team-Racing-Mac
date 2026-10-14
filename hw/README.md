@@ -15,6 +15,9 @@ here unchanged except for:
 - the port's DMA chain runner (`ee/dma.*`) and its 64 bit host address slots (`ee/address.*`) are left out: a recompiled game
   has real PS2 addresses, and the runtime's DMA controller (`runtime/src/dmac.cpp`) runs the channels
 - `gs/gs.h` and `gs/gs.cpp`: `Gs::eventHook`, told of SIGNAL, FINISH and LABEL writes (the runtime's CSR and the GS interrupt)
+- `gs/gs.h`, `gs/gs.cpp` and `gs/gsdraw.cpp`: `Gs::shownBufferWrites`, the primitives and transfers that wrote into a buffer
+  an enabled circuit shows (the runtime's frame counter: Crash Tag Team Racing copies each finished picture into a display
+  buffer it never moves)
 - `gs/gsdraw.cpp`: `Wrap` keeps the region clamp's and region repeat's texel inside the decoded level (a region past the
   texture's size read past it)
 - `ee/vu1translate.*`, `ee/vu1jit.h` and the translator (`native/tools/vu1_translate.py` and `vudecode.py` there,

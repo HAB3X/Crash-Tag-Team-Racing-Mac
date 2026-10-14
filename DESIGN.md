@@ -301,7 +301,10 @@ actions, going back from them goes back to the game, and the game just waits whi
 ### Debugging
 
 `--watch ADDR[:WORDS],...` logs guest memory every `--watch-every` seconds, `--fps` the game's frames and the vblanks of each
-second; `--log` turns on the channels' logs; `--audio-dump FILE.wav` keeps the sound.
+second (also the window's title); `--log` turns on the channels' logs; `--audio-dump FILE.wav` keeps the sound. A frame is a
+vblank period in which the game presented a picture: an enabled circuit's DISPFB changed (WoC flips between two buffers) or
+something was drawn or transferred into the buffer shown (CTTR copies each finished picture into one display buffer it
+never moves, which DISPFB alone counted as no frames at all). It's counted on the GS's side, in order with what the game sent.
 
 ### Not done yet
 

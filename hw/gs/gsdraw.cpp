@@ -230,6 +230,10 @@ void Gs::DrawPrimitive(const Vertex* vertexes, u32 count)
     DrawState state;
     SetUpState(state, &vertexes[count - 1]);
     primitivesDrawn++;
+    if (state.frameWritten && Shown(state.fbp))
+    {
+        shownBufferWrites++;
+    }
     // Debugging: TWIN_GS_DUMP_AT=PRIM,BP,BW,PSM,W,H[;...] (hex BP and PSM) writes that buffer's values, as local memory holds
     // them just before primitive PRIM, to gsdump_PRIM_BP.bin (a u32 a pixel, row by row) in
     // $TWIN_HW_DUMP_DIR (or the system's temporary folder)

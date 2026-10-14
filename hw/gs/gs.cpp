@@ -311,6 +311,10 @@ void Gs::WriteRegister(u32 address, u64 value)
         trxreg_.value = value;
         break;
     case TRXDIR:
+        if (((value & 3) == 0 || (value & 3) == 2) && Shown(static_cast<u32>(bitbltbuf_.dbp)))
+        {
+            shownBufferWrites++;
+        }
         switch (value & 3)
         {
         case 0:

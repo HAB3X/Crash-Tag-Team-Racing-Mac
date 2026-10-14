@@ -518,6 +518,13 @@ public:
     RegDispfb dispfb[2] = {};
     RegDisplay display[2] = {};
     u64 bgcolor = 0;
+    // Primitives and transfers that wrote into a buffer an enabled circuit shows (ps2-native-runtime's addition): a game
+    // that copies each finished picture into a display buffer it never moves presents its frames that way, not by DISPFB
+    u64 shownBufferWrites = 0;
+    bool Shown(u32 bp) const
+    {
+        return (pmode.en1 != 0 && bp == dispfb[0].fbp * 32) || (pmode.en2 != 0 && bp == dispfb[1].fbp * 32);
+    }
 
     // The picture of the PCRTC's circuits merged, as the TV gets it: each enabled circuit's buffer read at its place, the first
     // blended over the second by PMODE's alpha
