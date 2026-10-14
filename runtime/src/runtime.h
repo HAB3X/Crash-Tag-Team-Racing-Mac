@@ -14,19 +14,16 @@
 #include <pthread.h>
 #endif
 
-union SDL_Event;
-struct SDL_Window;
+#include "../../hw/hardware.h"
 
 namespace Gs
 {
-class Gs;
+struct DisplayImage;
 }
-namespace Ee
-{
-class Vu;
-class Vif;
-class Gif;
-}
+
+union SDL_Event;
+struct SDL_Window;
+struct SDL_FRect;
 
 namespace Ps2
 {
@@ -124,15 +121,8 @@ void DmacWrite(u32 address, u32 value);
 bool Sif0Receive(const u8* data, u32 bytes);
 
 // --- gs.cpp
-struct Hardware
-{
-    Gs::Gs* gs;
-    Ee::Gif* gif;
-    Ee::Vu* vu0;
-    Ee::Vu* vu1;
-    Ee::Vif* vif0;
-    Ee::Vif* vif1;
-};
+// The hardware layer's set (hw/hardware.h): the hardware renderer finds the GS through NativeGraphics::GetHardware
+using Hardware = NativeGraphics::Hardware;
 Hardware& Hw();
 void GsInit();
 u64 GsPrivRead(u32 address);
@@ -172,7 +162,12 @@ struct Options
     };
     std::vector<Press> presses;
     // Text typed at given times (seconds of game time), as the keyboard types it while the game takes text
-    std::vector<std::pair<double, std::string>> typed;
+    std::vector<std::pair<double, std::string>> typed;    // What draws the GS's primitives: 1 the GPU (the hardware layer's OpenGL renderer), 0 the software GS; the GPU's internal
+    // resolution (1-8 times the PS2's) and its textures' upscale (0, 2 or 4 times). -1: $PS2_GS, $PS2_GS_SCALE,
+    // $PS2_TEXTURE_UPSCALE, or the defaults (the GPU at 3x, no upscale)
+    int gs = -1;
+    int gsScale = -1;
+    int textureUpscale = -1;
 };
 extern Options g_options;
 
@@ -185,6 +180,23 @@ void RenderFlush();
 void RenderSync();
 // A picture made on the GS's side; returns once the render thread is at most two pictures behind
 void RenderFrame(std::function<void()> show);
+
+// --- display.cpp: the window (OpenGL) and the picture's way from the GS to it
+// The window and the GPU's contexts made (the main thread, before RenderStart): the window, or null when headless
+SDL_Window* DisplayOpen();
+// The render thread's start: its context made current and the hardware renderer started (unless the software GS is asked for)
+void DisplayRenderThreadStart();
+// No render thread: the software GS draws
+void DisplayNoRenderThread();
+// On the GS's side: whether the GPU draws; the shown picture copied for the window (its slot, -1 when the shown buffer isn't the
+// GPU's), the last copy dropped, and the picture's pixels read (at the internal resolution when the GPU has it)
+bool DisplayOnGpu();
+int DisplayCopyShown();
+void DisplayDropShown();
+bool DisplayReadShown(Gs::DisplayImage& image);
+// On the main thread: the newest copy (or the pixels given) drawn over the window; where the picture is, in the window's points
+void DisplayPresent(const Gs::DisplayImage* image, ::SDL_FRect* pictureRect);
+void DisplayClose();
 
 // --- input.cpp: port 0's controller from the keyboard, a gamepad and --press
 u32 ButtonsFromNames(const std::string& names);

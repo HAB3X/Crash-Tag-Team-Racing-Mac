@@ -9,6 +9,9 @@ These files come from the Crash Twinsanity native port (`src/platform/native/gra
 here unchanged except for:
 
 - `common.h` is this repository's own (the integer and float type names)
+- `hardware.h` and `native.h` are this repository's own, in place of the port's: the set of hardware the OpenGL renderer finds
+  the GS through (`NativeGraphics::GetHardware`) and the settings folder its replacement textures are under
+  (`Native::SettingsFolder`), both answered by the runtime (`runtime/src/display.cpp`)
 - the port's DMA chain runner (`ee/dma.*`) and its 64 bit host address slots (`ee/address.*`) are left out: a recompiled game
   has real PS2 addresses, and the runtime's DMA controller (`runtime/src/dmac.cpp`) runs the channels
 - `gs/gs.h` and `gs/gs.cpp`: `Gs::eventHook`, told of SIGNAL, FINISH and LABEL writes (the runtime's CSR and the GS interrupt)

@@ -47,11 +47,13 @@ std::atomic<u64> g_flips{0};
 std::mutex g_pictureLock;
 std::condition_variable g_pictureCv;
 Gs::DisplayImage g_picture;
+// The snapshots made, for the presenter to save (their names and pictures)
+std::vector<std::pair<std::string, Gs::DisplayImage>> g_snapshots;
 // $PS2_DUMP_BUFFER: the shown buffer read whole (its width and the display's full height), saved beside each snapshot
-Gs::DisplayImage g_buffer;
 bool g_dumpBuffer = getenv("PS2_DUMP_BUFFER") != nullptr;
 u64 g_pictureSerial = 0;
 bool g_stop = false;
+SDL_Window* g_window = nullptr;
 
 void GsEvent(u32 address, u64 value)
 {
@@ -152,6 +154,8 @@ void GsInit()
     ps2_vu0 = reinterpret_cast<Ps2Vu0Regs*>(&g_hw.vu0->vf[0]);
     ps2_vu0_mem = g_hw.vu0->data();
     ps2_vu0->vf[0].f[3] = 1.0f;
+    // The window and the GPU's contexts first (on the main thread): the render thread starts the hardware renderer with its own
+    g_window = DisplayOpen();
     RenderStart();
 }
 
@@ -256,34 +260,69 @@ void GsVblank(bool start)
     {
         return;
     }
-    g_vblanks++;
+    u64 vblanks = ++g_vblanks;
     g_field ^= 1;
     g_csr |= 8;
     if (!(g_imr & 0x800))
     {
         RaiseIntc(0);
     }
-    // The picture: every frame for a window, at the asked times when headless
-    bool want = !g_options.headless;
-    if (g_options.headless && !g_options.snapshotDir.empty())
+    // The snapshots due now, by the game's time (its vblanks): a script can count on it, the wall clock's runs differ with how
+    // fast the host draws and loads
+    static double nextEvery = g_options.snapshotEvery;
+    static size_t nextAt = 0;
+    std::vector<std::string> names;
+    if (!g_options.snapshotDir.empty())
     {
-        want = true;
+        double game = static_cast<double>(vblanks) / 59.94;
+        char name[64];
+        if (g_options.snapshotEvery > 0 && game >= nextEvery)
+        {
+            snprintf(name, sizeof(name), "t%06.1f", game);
+            names.push_back(name);
+            nextEvery += g_options.snapshotEvery;
+        }
+        while (nextAt < g_options.snapshotAt.size() && game >= g_options.snapshotAt[nextAt])
+        {
+            snprintf(name, sizeof(name), "at%06.1f", g_options.snapshotAt[nextAt]);
+            names.push_back(name);
+            nextAt++;
+        }
     }
-    if (!want)
+    // The picture: every frame for a window or snapshots (the game's thread kept at most two pictures ahead), its pixels read
+    // for a snapshot when one is due
+    bool show = !g_options.headless;
+    if (!show && g_options.snapshotDir.empty())
     {
         return;
     }
-    // Read on the GS's side once it has drawn what came before (the game's thread goes on, at most two pictures ahead)
-    RenderFrame([] {
+    // Made on the GS's side once it has drawn what came before (the game's thread goes on, at most two pictures ahead): the
+    // GPU's picture copied for the window, the pixels read when there's no copy or a snapshot wants them
+    RenderFrame([show, names = std::move(names)] {
         Gs::DisplayImage image;
-        g_hw.gs->ReadDisplay(image);
+        bool copied = false;
+        if (show && DisplayOnGpu())
+        {
+            copied = DisplayCopyShown() >= 0;
+            if (!copied)
+            {
+                DisplayDropShown();
+            }
+        }
+        if (!names.empty() || (show && !copied))
+        {
+            DisplayReadShown(image);
+        }
         Gs::DisplayImage buffer;
-        if (g_dumpBuffer)
+        if (g_dumpBuffer && !names.empty())
         {
             Gs::Gs& gs = *g_hw.gs;
             int i = gs.pmode.en2 ? 1 : 0;
             buffer.width = static_cast<u32>(gs.dispfb[i].fbw) * 64;
             buffer.height = static_cast<u32>(gs.display[i].dh + 1);
+            gs.PrepareCpuRect(false, static_cast<u32>(gs.dispfb[i].psm), static_cast<u32>(gs.dispfb[i].fbp) * 32,
+                              static_cast<u32>(gs.dispfb[i].fbw), 0, 0, static_cast<s32>(buffer.width) - 1,
+                              static_cast<s32>(buffer.height) - 1, "dump");
             buffer.pixels.resize(static_cast<size_t>(buffer.width) * buffer.height);
             for (u32 y = 0; y < buffer.height; y++)
             {
@@ -296,8 +335,15 @@ void GsVblank(bool start)
             }
         }
         std::lock_guard<std::mutex> lock(g_pictureLock);
+        for (const std::string& name : names)
+        {
+            g_snapshots.push_back({name + ".png", image});
+            if (buffer.width != 0)
+            {
+                g_snapshots.push_back({name + "-buffer.png", buffer});
+            }
+        }
         g_picture = std::move(image);
-        g_buffer = std::move(buffer);
         g_pictureSerial++;
         g_pictureCv.notify_all();
     });
@@ -327,35 +373,16 @@ void PresenterRun()
 {
     using clock = std::chrono::steady_clock;
     auto start = clock::now();
-    double nextEvery = g_options.snapshotEvery;
-    size_t nextAt = 0;
     double nextWatch = 0;
     double nextFps = 1;
     u64 lastFlips = 0, lastVblanks = 0;
-    SDL_Window* window = nullptr;
-    SDL_Renderer* renderer = nullptr;
-    SDL_Texture* texture = nullptr;
-    u32 texW = 0, texH = 0;
-    if (!g_options.headless)
-    {
-        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
-        {
-            Log("SDL_Init: %s (running headless)", SDL_GetError());
-            g_options.headless = true;
-        }
-        else
-        {
-            window = SDL_CreateWindow("PS2 native runtime", 1280, 960, SDL_WINDOW_RESIZABLE);
-            renderer = SDL_CreateRenderer(window, nullptr);
-            SDL_SetRenderVSync(renderer, 1);
-        }
-    }
     InputInit();
     u64 shown = 0;
     for (;;)
     {
         Gs::DisplayImage image;
-        Gs::DisplayImage buffer;
+        std::vector<std::pair<std::string, Gs::DisplayImage>> snapshots;
+        bool fresh = false;
         {
             std::unique_lock<std::mutex> lock(g_pictureLock);
             g_pictureCv.wait_for(lock, std::chrono::milliseconds(20), [&] { return g_stop || g_pictureSerial != shown; });
@@ -366,32 +393,17 @@ void PresenterRun()
             if (g_pictureSerial != shown)
             {
                 shown = g_pictureSerial;
-                image = g_picture;
-                buffer = g_buffer;
+                image = std::move(g_picture);
+                snapshots.swap(g_snapshots);
+                fresh = true;
             }
         }
         double t = std::chrono::duration<double>(clock::now() - start).count();
-        // The scripted presses and the pictures go by the game's time (its vblanks), which a script can count on: the
-        // wall clock's runs differ with how fast the host draws and loads
         double game = static_cast<double>(g_vblanks.load()) / 59.94;
-        InputUpdate(game, window);
-        if (image.width != 0 && !g_options.snapshotDir.empty())
+        InputUpdate(game, g_window);
+        for (const auto& [name, picture] : snapshots)
         {
-            char name[64];
-            if (g_options.snapshotEvery > 0 && game >= nextEvery)
-            {
-                snprintf(name, sizeof(name), "t%06.1f.png", game);
-                SavePicture(image, name);
-                snprintf(name, sizeof(name), "t%06.1f-buffer.png", game);
-                SavePicture(buffer, name);
-                nextEvery += g_options.snapshotEvery;
-            }
-            while (nextAt < g_options.snapshotAt.size() && game >= g_options.snapshotAt[nextAt])
-            {
-                snprintf(name, sizeof(name), "at%06.1f.png", g_options.snapshotAt[nextAt]);
-                SavePicture(image, name);
-                nextAt++;
-            }
+            SavePicture(picture, name);
         }
         if (g_options.fps && t >= nextFps)
         {
@@ -431,7 +443,7 @@ void PresenterRun()
             KernelDumpThreads();
             break;
         }
-        if (window != nullptr)
+        if (g_window != nullptr)
         {
             SDL_Event e;
             while (SDL_PollEvent(&e))
@@ -440,44 +452,24 @@ void PresenterRun()
                 {
                     g_stop = true;
                 }
-                SDL_ConvertEventToRenderCoordinates(renderer, &e);
                 InputEvent(e);
             }
             if (g_stop)
             {
                 break;
             }
-            if (image.width != 0)
+            if (fresh)
             {
-                if (texture == nullptr || texW != image.width || texH != image.height)
+                SDL_FRect rect = {};
+                DisplayPresent(image.width != 0 ? &image : nullptr, &rect);
+                if (rect.w > 0)
                 {
-                    if (texture != nullptr)
-                    {
-                        SDL_DestroyTexture(texture);
-                    }
-                    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING,
-                                                static_cast<int>(image.width), static_cast<int>(image.height));
-                    texW = image.width;
-                    texH = image.height;
+                    InputPicture(rect.x, rect.y, rect.w, rect.h);
                 }
-                SDL_UpdateTexture(texture, nullptr, image.pixels.data(), static_cast<int>(image.width * 4));
-                SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-                SDL_RenderClear(renderer);
-                int w, h;
-                SDL_GetRenderOutputSize(renderer, &w, &h);
-                float scale = std::min(w / 640.0f, h / 480.0f);
-                SDL_FRect dst = {(w - 640 * scale) / 2, (h - 480 * scale) / 2, 640 * scale, 480 * scale};
-                SDL_RenderTexture(renderer, texture, nullptr, &dst);
-                InputPicture(dst.x, dst.y, dst.w, dst.h);
-                SDL_RenderPresent(renderer);
             }
         }
     }
-    if (window != nullptr)
-    {
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-    }
+    DisplayClose();
 }
 }
 

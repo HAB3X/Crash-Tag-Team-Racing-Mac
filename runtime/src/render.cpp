@@ -207,6 +207,7 @@ private:
     void Run()
     {
         ThreadOnPerformanceCores();
+        DisplayRenderThreadStart();
         for (;;)
         {
             Chunk* chunk;
@@ -256,6 +257,7 @@ void RenderStart()
     if (setting != nullptr && std::strcmp(setting, "0") == 0)
     {
         Log("graphics: the GS on the game's thread ($PS2_RENDER_THREAD=0)");
+        DisplayNoRenderThread();
         return;
     }
     g_render = new RenderThread();

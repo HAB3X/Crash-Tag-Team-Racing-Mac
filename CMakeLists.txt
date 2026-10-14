@@ -22,9 +22,14 @@ add_library(ps2hw STATIC
     hw/gs/gsmemory.cpp
     hw/gs/gsscale.cpp
     hw/gs/workers.cpp
+    hw/hw/bc7.cpp
+    hw/hw/gl.cpp
+    hw/hw/hwgs.cpp
+    hw/hw/replace.cpp
     hw/png.cpp
 )
 target_include_directories(ps2hw PUBLIC hw)
+target_link_libraries(ps2hw PUBLIC SDL3::SDL3)
 target_compile_options(ps2hw PRIVATE -O2 -fno-strict-float-cast-overflow -Wno-deprecated-declarations)
 
 # The runtime: memory, the kernel, the hardware registers, the DMAC, the IOP and the presenter
@@ -32,6 +37,7 @@ add_library(ps2runtime STATIC
     runtime/src/boot.cpp
     runtime/src/cpu.cpp
     runtime/src/disc.cpp
+    runtime/src/display.cpp
     runtime/src/dmac.cpp
     runtime/src/gs.cpp
     runtime/src/input.cpp
