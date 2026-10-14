@@ -136,14 +136,14 @@ time). RPC servers stand in for the modules:
 
 | Server | Status |
 |---|---|
-| loadfile (0x80000006) | module loads succeed (the IOP modules themselves are never run); version calls answer the IOPRP image's release |
+| loadfile (0x80000006) | modules load from the disc, from a buffer in the IOP's memory, or rom0 (none of them runs: each is known by its own name, its `.iopmod`'s); a name finds a loaded one; a game's own module (`IopRegisterModule`) is started by name with its arguments; version calls answer the IOPRP image's release |
 | iop heap (0x80000003) | allocations and frees in the IOP memory (first fit, from 64 KB up: no module of the console's takes room) |
 | fileio (0x80000001) | open, read, lseek, close on the disc image; SDK 2.5's asynchronous completion (result written, semaphore signalled) |
 | cdvd (0x80000592-0x8000059C) | init, media mode, disk type, the last error, the tray, disk ready (both libcdvd's), search file, reads |
 | padman (0x80000100) | SDK 2.x libpad: port open/close, main mode, pressure mode, actuators; port 0 has a DualShock 2 whose two frames in EE memory are rewritten at every vblank (`iop/padman.cpp`) |
 | mcserv (0x80000400) | the libmc of SDKs before 2.6: init, info, open, close, seek, read, write, flush, chdir, getdir, set file info, delete, format; each port's card is a host folder (`iop/mcserv.cpp`) |
 | sdrdrv | answered with zeros: no game has needed libsd's RPC server yet |
-| a game's own modules | registered by the game (`ps2/iop.h`): WoC's NUSOUND, which drives the SPU2 through libsd (`ps2/sound.h`, below) |
+| a game's own modules | registered by the game (`ps2/iop.h`): RPC servers (WoC's NUSOUND, which drives the SPU2 through libsd, `ps2/sound.h`, below), modules started by name (CTTR's Bink IOP side) and their own SIF commands both ways (`IopRegisterCommand`; `IopSendCommand`, with data sent ahead into the EE's memory, from any thread: a command waits in an outbox while the SIF's lock is taken, and goes at the next SIF exchange or vblank) |
 
 The alternative, emulating the IOP's MIPS R3000 and running the real IRX modules, would bring sound and pads for free but needs an
 IOP CPU, its kernel and the SPU2 timing; it can come later behind the same SIF interface.

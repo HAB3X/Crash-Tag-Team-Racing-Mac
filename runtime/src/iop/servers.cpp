@@ -18,7 +18,15 @@ struct OpenFile
 };
 std::map<int, OpenFile> g_files;
 int g_nextFd = 3;
+
+// The modules loaded (their IDs and names, the modules' own) and the game's own modules (IopRegisterModule), by name
 int g_nextModule = 1;
+std::map<int, std::string> g_modules;
+std::map<std::string, IopModuleStart>& GameModules()
+{
+    static std::map<std::string, IopModuleStart> m;
+    return m;
+}
 
 void Dump(const RpcCall& c)
 {
@@ -107,28 +115,129 @@ void Version(RpcCall& c)
     std::memcpy(c.out.data(), g_version, 4);
 }
 
-// --- the servers
-void LoadFile(RpcCall& c)
+// An IOP module's name, as its .iopmod section (an ELF section of type 0x70000080) has it after six words and the version
+std::string ModuleName(const u8* elf, size_t size)
 {
-    if (c.fno == 255)
+    auto r32 = [&](size_t off) { u32 v = 0; if (off + 4 <= size) std::memcpy(&v, elf + off, 4); return v; };
+    auto r16 = [&](size_t off) { u16 v = 0; if (off + 2 <= size) std::memcpy(&v, elf + off, 2); return v; };
+    if (size < 52 || std::memcmp(elf, "\x7f" "ELF", 4) != 0)
     {
-        Version(c);
-        return;
+        return "";
     }
-    // Find the module's path in the request
-    std::string path;
-    for (u32 off = 0; off + 8 < c.inSize && path.empty(); off += 4)
+    u32 shoff = r32(32);
+    u32 count = r16(48);
+    for (u32 n = 0; n < count; n++)
     {
-        std::string s = c.InString(off, 252);
-        if (s.find(':') != std::string::npos && s.size() > 4)
+        size_t h = shoff + n * 40;
+        if (r32(h + 4) == 0x70000080)
         {
-            path = s;
+            size_t at = r32(h + 16) + 26;
+            std::string name;
+            while (at < size && elf[at] != 0 && name.size() < 64)
+            {
+                name += static_cast<char>(elf[at++]);
+            }
+            return name;
+        }
+    }
+    return "";
+}
+
+// A module loaded: its ID, and the game's own module of that name started with the arguments (arg_len bytes, each ending
+// with a zero)
+int ModuleLoaded(const std::string& name, const RpcCall& c, u32 argLength)
+{
+    std::vector<std::string> args;
+    std::string arg;
+    for (u32 i = 0; i < std::min<u32>(argLength, 252); i++)
+    {
+        char ch = static_cast<char>(c.in[260 + i]);
+        if (ch == 0)
+        {
+            args.push_back(arg);
+            arg.clear();
+        }
+        else
+        {
+            arg += ch;
         }
     }
     int id = g_nextModule++;
-    Log("IOP: load module %s (function %u): id %d", path.empty() ? "(from memory)" : path.c_str(), c.fno, id);
-    c.Out32(0, static_cast<u32>(id));
-    c.Out32(4, 0);
+    g_modules[id] = name;
+    auto it = GameModules().find(name);
+    Log("IOP: module %s loaded: id %d%s", name.empty() ? "(unnamed)" : name.c_str(), id,
+        it != GameModules().end() ? ", the game's" : "");
+    if (it != GameModules().end())
+    {
+        it->second(args);
+    }
+    return id;
+}
+
+// --- the servers
+// The module loader (loadfile): 0 loads a module from a path (arg_len at 0, the path at 8, the arguments at 260), 6 from a
+// buffer in the IOP's memory (its address at 0, arg_len at 4), 9 finds a loaded module by name (at 8). The modules
+// themselves never run here: a module of the game's own (IopRegisterModule) is started by name
+void LoadFile(RpcCall& c)
+{
+    switch (c.fno)
+    {
+    case 255:
+        Version(c);
+        return;
+    case 0:
+    {
+        std::string path = c.InString(8, 252);
+        std::string name;
+        u32 lsn, size;
+        if (path.rfind("rom0:", 0) == 0)
+        {
+            // The console's own modules: named by their file
+            name = path.substr(5);
+        }
+        else if (DiscFind(DiscPath(path), lsn, size))
+        {
+            std::vector<u8> elf((size + 2047) / 2048 * 2048);
+            DiscReadSectors(lsn, static_cast<u32>(elf.size() / 2048), elf.data());
+            name = ModuleName(elf.data(), size);
+        }
+        else
+        {
+            Log("IOP: load module %s: no such file", path.c_str());
+            c.Out32(0, static_cast<u32>(-203)); // KE_NOFILE
+            return;
+        }
+        PS2_LOG(LogIop, "IOP: load module %s", path.c_str());
+        c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(0))));
+        c.Out32(4, 0);
+        return;
+    }
+    case 6:
+    {
+        u32 at = c.In32(0) & (IopRamSize - 1);
+        std::string name = ModuleName(IopMem() + at, IopRamSize - at);
+        c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(4))));
+        c.Out32(4, 0);
+        return;
+    }
+    case 9:
+    {
+        std::string name = c.InString(8, 56);
+        for (const auto& [id, loaded] : g_modules)
+        {
+            if (loaded == name)
+            {
+                c.Out32(0, static_cast<u32>(id));
+                return;
+            }
+        }
+        c.Out32(0, static_cast<u32>(-202)); // KE_UNKNOWN_MODULE
+        return;
+    }
+    default:
+        Unhandled(c);
+        return;
+    }
 }
 
 void Heap(RpcCall& c)
@@ -379,6 +488,10 @@ std::map<u32, Registered>& Registry()
 }
 
 void IopRegisterServer(u32 sid, const char* name, RpcServer server) { Registry()[sid] = {name, std::move(server)}; }
+
+void IopRegisterModule(const char* name, IopModuleStart start) { GameModules()[name] = std::move(start); }
+
+u8* IopMemory(u32 address) { return IopMem() + (address & (IopRamSize - 1)); }
 
 u8* EeMemory(u32 address) { return Host(address & 0x1FFFFFFF); }
 

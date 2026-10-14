@@ -296,7 +296,7 @@ void IopInit();
 void SifSetDma(u32 src, u32 dest, u32 size, u32 attr);
 u32 SifGetReg(u32 reg);
 void SifSetReg(u32 reg, u32 value);
-// Work the IOP has queued for the EE (replies), done between guest instructions
+// The modules' commands to the EE that waited for the SIF's lock, sent (the kernel's timer thread, every vblank)
 void IopUpdate();
 // The EE took the IOP's last reply (its SifSetDChain, or the end of its SIF0 interrupt)
 void SifReplyTaken();

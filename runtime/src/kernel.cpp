@@ -526,6 +526,7 @@ void TimerThread()
             g_vblankStart = 1;
             UpdatePending();
         }
+        IopUpdate();
         // The blank lasts about 22 lines of 525
         std::this_thread::sleep_for(std::chrono::microseconds(700));
         {

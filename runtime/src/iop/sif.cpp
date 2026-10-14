@@ -14,7 +14,17 @@ namespace Ps2
 namespace
 {
 u8* g_iopMem = nullptr;
-std::mutex g_sifLock;
+// Recursive: a module's command handler, called with it held, may send a command of its own
+std::recursive_mutex g_sifLock;
+// The modules' commands to the EE (IopSendCommand) wait here until the SIF's lock is free: a sender may hold the sound lock,
+// which a server takes under the SIF's
+std::mutex g_outLock;
+std::deque<std::vector<u8>> g_outbox;
+std::map<u32, IopCommandHandler>& CommandHandlers()
+{
+    static std::map<u32, IopCommandHandler> h;
+    return h;
+}
 u32 g_sysregs[8] = {};
 u32 g_msflag = 0;
 u32 g_mscom = 0;
@@ -203,8 +213,31 @@ void HandleCommand(const u8* p)
         break;
     }
     default:
-        Log("SIF command %08x (%u bytes) not done", cid, psize);
+    {
+        auto handler = CommandHandlers().find(cid);
+        if (handler != CommandHandlers().end())
+        {
+            PS2_LOG(LogSif, "EE to IOP: command %08x (%u bytes)", cid, psize);
+            handler->second(p, psize);
+            break;
+        }
+        if (Once("sifcmd " + std::to_string(cid)))
+        {
+            Log("SIF command %08x (%u bytes) not done", cid, psize);
+        }
         break;
+    }
+    }
+}
+
+// The modules' commands waiting in the outbox join the replies (with the SIF's lock held)
+void TakeOutbox()
+{
+    std::lock_guard<std::mutex> lock(g_outLock);
+    while (!g_outbox.empty())
+    {
+        g_replies.push_back(std::move(g_outbox.front()));
+        g_outbox.pop_front();
     }
 }
 }
@@ -281,7 +314,7 @@ void IopInit()
 
 void SifSetDma(u32 src, u32 dest, u32 size, u32 attr)
 {
-    std::lock_guard<std::mutex> lock(g_sifLock);
+    std::lock_guard<std::recursive_mutex> lock(g_sifLock);
     dest &= IopRamSize - 1;
     size = (size + 3) & ~3u;
     if (dest + size > IopRamSize)
@@ -294,13 +327,44 @@ void SifSetDma(u32 src, u32 dest, u32 size, u32 attr)
     if (dest == IopCmdBuffer)
     {
         HandleCommand(g_iopMem + dest);
+        TakeOutbox();
+        DeliverNext();
+    }
+}
+
+void IopRegisterCommand(u32 cid, IopCommandHandler handler) { CommandHandlers()[cid] = std::move(handler); }
+
+void IopSendCommand(u32 cid, std::vector<u8> packet, u32 eeAddress, const void* data, u32 dataSize)
+{
+    if (packet.size() < 16)
+    {
+        packet.resize(16);
+    }
+    if (data != nullptr && dataSize > 0)
+    {
+        // The data goes ahead of the command, as the IOP's SIF DMA sends it
+        std::memcpy(Host(eeAddress & 0x1FFFFFF), data, dataSize);
+    }
+    W32(packet, 0, static_cast<u32>(packet.size()) | (dataSize << 8));
+    W32(packet, 4, eeAddress);
+    W32(packet, 8, cid);
+    {
+        std::lock_guard<std::mutex> lock(g_outLock);
+        g_outbox.push_back(std::move(packet));
+    }
+    std::unique_lock<std::recursive_mutex> lock(g_sifLock, std::try_to_lock);
+    if (lock.owns_lock())
+    {
+        TakeOutbox();
+        DeliverNext();
     }
 }
 
 // The EE's command handler took the last reply: the next can go (its SifSetDChain, or the end of its interrupt)
 void SifReplyTaken()
 {
-    std::lock_guard<std::mutex> lock(g_sifLock);
+    std::lock_guard<std::recursive_mutex> lock(g_sifLock);
+    TakeOutbox();
     if (g_inFlight)
     {
         g_inFlight = false;
@@ -349,5 +413,11 @@ void SifSetReg(u32 reg, u32 value)
     }
 }
 
-void IopUpdate() {}
+void IopUpdate()
+{
+    // The modules' commands sent while the SIF was busy
+    std::lock_guard<std::recursive_mutex> lock(g_sifLock);
+    TakeOutbox();
+    DeliverNext();
+}
 }

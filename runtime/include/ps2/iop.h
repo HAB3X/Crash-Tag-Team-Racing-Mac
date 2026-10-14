@@ -56,6 +56,23 @@ struct RpcCall
 using RpcServer = std::function<void(RpcCall&)>;
 void IopRegisterServer(u32 sid, const char* name, RpcServer server);
 
+// A module's own SIF commands (the EE's sceSifSendCmd to a command ID the module added a handler for): the packet as it landed
+// in the IOP's memory (its 16 byte header, then the rest the EE sent) and its size. Called with the SIF's lock held
+using IopCommandHandler = std::function<void(const u8* packet, u32 size)>;
+void IopRegisterCommand(u32 cid, IopCommandHandler handler);
+// A module's command to the EE (its isceSifSendCmd): the packet (the first 16 bytes its header, whose sizes, address and ID are
+// filled here; the module's own fields from 12 on), with data sent ahead of it into the EE's memory at eeAddress. Any thread:
+// the commands reach the EE's handlers in order, after the replies already waiting
+void IopSendCommand(u32 cid, std::vector<u8> packet, u32 eeAddress = 0, const void* data = nullptr, u32 dataSize = 0);
+
+// A module of the game's own that the EE loads (sceSifLoadModule from the disc or sceSifLoadModuleBuffer from the IOP's memory),
+// known by its name (the module's own, in its .iopmod section: "RAD_IOP_SIDE"): start runs with its arguments as it's loaded
+using IopModuleStart = std::function<void(const std::vector<std::string>& args)>;
+void IopRegisterModule(const char* name, IopModuleStart start);
+
+// The IOP's memory (2 MB) at an address
+u8* IopMemory(u32 address);
+
 // A semaphore signalled from the IOP's side (a module's completion), and the EE's memory
 void KernelSignalSema(int id);
 u8* EeMemory(u32 address);
