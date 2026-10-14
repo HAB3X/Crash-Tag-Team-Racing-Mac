@@ -1305,7 +1305,9 @@ private:
     // Each page's state: memory's copy out of date, local memory's (the CPU's) out of date, the shadow of what memory's copy
     // holds good (for re-uploads of the same bytes), and when its content last changed
     Gs::PageSet memStale_;
-    // Pages whose content memory's copy has from a target at a higher scale than 1 (read back at the PS2's resolution)
+    // Pages whose content memory's copy has from a target, and from one at a higher scale than 1 (read back at the PS2's
+    // resolution)
+    Gs::PageSet fromTargetPages_;
     Gs::PageSet scaledPages_;
     // A depth target's copy as floats (the shader's native depth test reads it), by size
     std::map<std::pair<u32, u32>, std::pair<GLuint, GLuint>> depthCopies_;
@@ -2216,8 +2218,9 @@ GLuint HwGs::DecodeOnGpu(const Gs::Gs::DrawState& state, s32 left, s32 top, s32 
     };
     findStale();
     // A big texture read from a render target a piece at a time (the effects' strips): the whole of it decoded at once,
-    // so the next pieces find it decoded
-    if (!whole && anyStale && (needed & newestMask_).any())
+    // so the next pieces find it decoded. Also once the target's pages are in memory's copy: another texture over them (the
+    // same buffer with the next CLUT) would be decoded a piece a draw, each a pass of its own between the draws' passes
+    if (!whole && anyStale && (needed & (newestMask_ | fromTargetPages_)).any())
     {
         for (u32 i = 0; i < t.levelCount; i++)
         {
@@ -2684,6 +2687,7 @@ void HwGs::MemFromTarget(Target* target, const Gs::PageSet& pages)
     Gl& gl = GetGl();
     stats.downloads++;
     TraceConversion("from", target, pages);
+    fromTargetPages_ |= pages & target->pages;
     if (target->scale > 1)
     {
         scaledPages_ |= pages & target->pages;
@@ -3088,6 +3092,7 @@ void HwGs::ProcessWrites()
 
     newestMask_ &= ~written;
     memStale_ |= written;
+    fromTargetPages_ &= ~written;
     scaledPages_ &= ~written;
     cpuStale_ &= ~written;
     shadowGood_ &= ~written;
