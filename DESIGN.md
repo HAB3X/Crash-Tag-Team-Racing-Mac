@@ -145,7 +145,7 @@ time). RPC servers stand in for the modules:
 | Server | Status |
 |---|---|
 | loadfile (0x80000006) | modules load from the disc, from a buffer in the IOP's memory, or rom0 (none of them runs: each is known by its own name, its `.iopmod`'s); a name finds a loaded one; a game's own module (`IopRegisterModule`) is started by name with its arguments; version calls answer the IOPRP image's release |
-| iop heap (0x80000003) | allocations and frees in the IOP memory (first fit, from 64 KB up: no module of the console's takes room) |
+| iop heap (0x80000003) | FILEIO's heap server (its functions 1-9 read from IOPRP280's FILEIO): allocations as AllocSysMemory's modes (0 when there's no room), frees, a file loaded into the IOP's memory, sysmem's size, free and block queries; first fit from 64 KB up (no module of the console's takes room). Each bound server has a 32 KB receive buffer and no client buffer, as the modules register |
 | fileio (0x80000001) | open, read, lseek, close on the disc image; SDK 2.5's asynchronous completion (result written, semaphore signalled) |
 | cdvd (0x80000592-0x8000059C) | init, media mode, disk type, the last error, the tray, disk ready (both libcdvd's), search file, reads |
 | padman (0x80000100) | SDK 2.x libpad: port open/close, main mode, pressure mode, actuators; port 0 has a DualShock 2 whose two frames in EE memory are rewritten at every vblank (`iop/padman.cpp`) |

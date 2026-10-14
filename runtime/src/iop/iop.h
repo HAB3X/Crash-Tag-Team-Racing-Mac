@@ -13,6 +13,12 @@ constexpr u32 IopServerBase = 0x00002000;
 // here, so a game finds at least the room it would on the console (CTTR asks for 264 KB after binding 14 servers)
 constexpr u32 IopHeapBase = 0x00010000;
 
+// The heap as sysmem has it: AllocSysMemory's modes (0 the lowest block that fits, 1 the highest, 2 at an address; 0 when
+// there's no room), QueryTotalFreeMemSize or QueryMaxFreeMemSize, QueryBlockTopAddress or QueryBlockSize (bit 31 set for a
+// free block, -1 outside the heap)
+u32 IopAllocMode(u32 mode, u32 size, u32 address);
+u32 IopFreeTotal(bool largest);
+u32 IopBlockOf(u32 address, bool size);
 void IopReset();
 // The IOP replacement image the reset loads (its name gives the modules' version)
 void IopSetImage(const std::string& path);

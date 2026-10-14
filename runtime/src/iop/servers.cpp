@@ -244,11 +244,16 @@ void Heap(RpcCall& c)
 {
     switch (c.fno)
     {
-    case 1: // alloc
+    case 1: // alloc: 0 when there's no room, as AllocSysMemory answers
     {
         u32 size = c.In32(0);
-        u32 at = IopAlloc(size);
+        u32 at = IopAllocMode(0, size, 0);
         PS2_LOG(LogIop, "IOP heap: alloc %u at %08x", size, at);
+        if (at == 0)
+        {
+            Log("IOP heap: no room for %u bytes (%u free, the largest block %u)", size, IopFreeTotal(false),
+                IopFreeTotal(true));
+        }
         c.Out32(0, at);
         break;
     }
@@ -260,6 +265,39 @@ void Heap(RpcCall& c)
         c.Out32(0, freed ? 0 : static_cast<u32>(-1));
         break;
     }
+    case 3: // a file loaded into the IOP's memory: its address at 0, its name at 4
+    {
+        std::vector<u8> data;
+        std::string name = c.InString(4, 252);
+        if (!DiscReadFile(DiscPath(name), data))
+        {
+            Log("IOP heap: load %s: no such file", name.c_str());
+            c.Out32(0, static_cast<u32>(-1));
+            break;
+        }
+        u32 at = c.In32(0) & (IopRamSize - 1);
+        std::memcpy(IopMem() + at, data.data(), std::min<size_t>(data.size(), IopRamSize - at));
+        c.Out32(0, 0);
+        break;
+    }
+    case 4: // allocate as AllocSysMemory: size at 0, mode at 4, address at 8
+        c.Out32(0, IopAllocMode(c.In32(4), c.In32(0), c.In32(8)));
+        break;
+    case 5: // QueryMemSize
+        c.Out32(0, IopRamSize);
+        break;
+    case 6: // QueryMaxFreeMemSize
+        c.Out32(0, IopFreeTotal(true));
+        break;
+    case 7: // QueryTotalFreeMemSize
+        c.Out32(0, IopFreeTotal(false));
+        break;
+    case 8: // QueryBlockTopAddress
+        c.Out32(0, IopBlockOf(c.In32(0), false));
+        break;
+    case 9: // QueryBlockSize
+        c.Out32(0, IopBlockOf(c.In32(0), true));
+        break;
     default:
         Unhandled(c);
         break;

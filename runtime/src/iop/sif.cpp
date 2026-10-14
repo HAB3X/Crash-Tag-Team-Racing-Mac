@@ -14,6 +14,8 @@ namespace Ps2
 namespace
 {
 u8* g_iopMem = nullptr;
+// A server's receive buffer (the modules' own are smaller; the client data buffer, cbuf, is none, as the modules register)
+constexpr u32 ServerBufferSize = 0x8000;
 // Recursive: a module's command handler, called with it held, may send a command of its own
 std::recursive_mutex g_sifLock;
 // The modules' commands to the EE (IopSendCommand) wait here until the SIF's lock is free: a sender may hold the sound lock,
@@ -119,7 +121,7 @@ BoundServer& Bind(u32 sid)
     BoundServer s;
     s.sid = sid;
     s.address = IopServerBase + static_cast<u32>(g_bySid.size()) * 0x40;
-    s.buffer = IopAlloc(0x10000);
+    s.buffer = IopAlloc(ServerBufferSize);
     g_bySid[sid] = s;
     g_byAddress[s.address] = s;
     return g_bySid[sid];
@@ -163,7 +165,7 @@ void HandleCommand(const u8* p)
         u32 sid = R32(p, 32);
         BoundServer& s = Bind(sid);
         PS2_LOG(LogSif, "bind %08x (%s)", sid, IopServerName(sid));
-        QueueReply(RendPacket(p, SIF_CMD_RPC_BIND, s.address, s.buffer, s.buffer + 0x8000));
+        QueueReply(RendPacket(p, SIF_CMD_RPC_BIND, s.address, s.buffer, 0));
         DeliverNext();
         break;
     }
@@ -183,6 +185,11 @@ void HandleCommand(const u8* p)
             break;
         }
         const BoundServer& s = it->second;
+        if (sendSize > ServerBufferSize)
+        {
+            Fatal("RPC %08x function %u sent %u bytes, more than its receive buffer's %u (it ran past it)", s.sid, fno,
+                  sendSize, ServerBufferSize);
+        }
         RpcCall call;
         call.sid = s.sid;
         call.fno = fno;
@@ -196,7 +203,7 @@ void HandleCommand(const u8* p)
         {
             std::memcpy(Host(call.receive), call.out.data(), std::min<size_t>(recvSize, call.out.size()));
         }
-        QueueReply(RendPacket(p, SIF_CMD_RPC_CALL, server, s.buffer, s.buffer + 0x8000));
+        QueueReply(RendPacket(p, SIF_CMD_RPC_CALL, server, s.buffer, 0));
         DeliverNext();
         break;
     }
@@ -244,32 +251,80 @@ void TakeOutbox()
 
 u8* IopMem() { return g_iopMem; }
 
-u32 IopAlloc(u32 size)
+u32 IopAllocMode(u32 mode, u32 size, u32 address)
 {
     std::lock_guard<std::mutex> lock(g_heapLock);
     u32 need = std::max<u32>((size + 63) & ~63u, 64);
+    // The block: the first that fits (mode 0), the last (1), or the one holding the address (2)
+    auto chosen = g_heapFree.end();
     for (auto it = g_heapFree.begin(); it != g_heapFree.end(); ++it)
     {
-        if (it->second < need)
+        if (mode == 2 ? (it->first <= address && address + need <= it->first + it->second) : it->second >= need)
         {
-            continue;
+            chosen = it;
+            if (mode != 1)
+            {
+                break;
+            }
         }
-        u32 at = it->first;
-        u32 left = it->second - need;
-        g_heapFree.erase(it);
-        if (left > 0)
-        {
-            g_heapFree[at + need] = left;
-        }
-        g_heapUsed[at] = need;
-        return at;
     }
-    u32 free = 0;
+    if (chosen == g_heapFree.end())
+    {
+        return 0;
+    }
+    u32 start = chosen->first, length = chosen->second;
+    u32 at = mode == 1 ? start + length - need : mode == 2 ? address : start;
+    g_heapFree.erase(chosen);
+    if (at > start)
+    {
+        g_heapFree[start] = at - start;
+    }
+    if (at + need < start + length)
+    {
+        g_heapFree[at + need] = start + length - at - need;
+    }
+    g_heapUsed[at] = need;
+    return at;
+}
+
+u32 IopFreeTotal(bool largest)
+{
+    std::lock_guard<std::mutex> lock(g_heapLock);
+    u32 total = 0, most = 0;
     for (const auto& [at, n] : g_heapFree)
     {
-        free += n;
+        total += n;
+        most = std::max(most, n);
     }
-    Fatal("IOP memory full: %u bytes asked for, %u free in %zu blocks", size, free, g_heapFree.size());
+    return largest ? most : total;
+}
+
+u32 IopBlockOf(u32 address, bool size)
+{
+    std::lock_guard<std::mutex> lock(g_heapLock);
+    for (const auto* blocks : {&g_heapUsed, &g_heapFree})
+    {
+        auto it = blocks->upper_bound(address);
+        if (it != blocks->begin() && address < std::prev(it)->first + std::prev(it)->second)
+        {
+            --it;
+            // A free block's answer has bit 31 set, as sysmem's
+            u32 value = size ? it->second : it->first;
+            return blocks == &g_heapFree ? value | 0x80000000u : value;
+        }
+    }
+    return static_cast<u32>(-1);
+}
+
+u32 IopAlloc(u32 size)
+{
+    u32 at = IopAllocMode(0, size, 0);
+    if (at == 0)
+    {
+        Fatal("IOP memory full: %u bytes asked for, %u free, the largest block %u", size, IopFreeTotal(false),
+              IopFreeTotal(true));
+    }
+    return at;
 }
 
 bool IopFree(u32 at)
