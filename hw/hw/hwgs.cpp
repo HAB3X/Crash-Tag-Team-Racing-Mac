@@ -4513,7 +4513,15 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         program |= BitNativeTexel;
     }
 
-    if (state.alphaTest && state.atst != Gs::AtstAlways)
+    // A failed alpha test whose AFAIL writes all a passing pixel writes changes nothing (FB_ONLY with the depth not written,
+    // RGB_ONLY with neither the alpha nor the depth, ZB_ONLY with no frame): drawn without the test, in one pass. Two passes
+    // would draw the batch's failing pixels after all its passing ones, where overlapping primitives (WoC's depth-of-field
+    // sprites, tested GEQUAL with FB_ONLY) need them in the GS's order
+    const bool alphaWritten = state.frameWritten && channelMasks[3] != channelFull[3];
+    const bool failWritesAll = (state.afail == Gs::AfailFbOnly && !state.zWritten) ||
+                               (state.afail == Gs::AfailRgbOnly && !state.zWritten && !alphaWritten) ||
+                               (state.afail == Gs::AfailZbOnly && !state.frameWritten);
+    if (state.alphaTest && state.atst != Gs::AtstAlways && !failWritesAll)
     {
         program |= BitAlphaTest | (state.atst << BitAtstShift);
         key.aref = state.aref;
