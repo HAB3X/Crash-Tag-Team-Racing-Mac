@@ -11,3 +11,20 @@ longjmp = ["0x4f2e90"]
 [overrides]
 # address = "host function": replaced by the runtime or by src/
 "0x3b4eb0" = "CttrFiberStart"   # a fiber's first run on its own stack (src/fibers.cpp)
+
+[vu1]
+# VU1's programs, bare code in .vutext uploaded by the renderer's own DMA chains (REF tags into .vutext): the main set at micro
+# address 0 (0x504FC0-0x507620, in five MPGs), and the overlays the table at 0x513008 lists (start and end), uploaded after it
+# at 0x4CC
+programs = [
+    ["0x504fc0", "0x507620", "0x0"],
+    ["0x507620", "0x508c18", "0x4cc"],
+    ["0x5099f0", "0x50af88", "0x4cc"],
+    ["0x50af90", "0x50b3a8", "0x4cc"],
+    ["0x508c20", "0x5099f0", "0x4cc"],
+    ["0x50b8f0", "0x50be60", "0x4cc"],
+    ["0x50b3b0", "0x50b600", "0x4cc"],
+    ["0x50b600", "0x50b8e8", "0x4cc"],
+    ["0x50bf10", "0x50c4a8", "0x4cc"],
+    ["0x50c4b0", "0x50cc60", "0x4cc"],
+]
