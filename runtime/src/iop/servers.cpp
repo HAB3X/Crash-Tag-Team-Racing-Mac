@@ -416,6 +416,19 @@ void Cdvd(RpcCall& c)
             c.Out32(0, 1);
             return;
         }
+        case 0x0D: // read into the IOP's memory (libcdvd 2.6 on): lsn, sectors, the IOP's buffer, the mode, as a read's
+        {
+            u32 lsn = c.In32(0);
+            u32 sectors = c.In32(4);
+            u32 dest = c.In32(8) & (IopRamSize - 1);
+            if (dest + sectors * 2048 <= IopRamSize)
+            {
+                DiscReadSectors(lsn, sectors, IopMem() + dest);
+            }
+            PS2_LOG(LogIop, "cdvd read %u sectors from %u to IOP %06x", sectors, lsn, dest);
+            c.Out32(0, 1);
+            return;
+        }
         case 0x0E: // the disc's type again, before a read (6 would stop it): as the S command's
             c.Out32(0, DiscIsDvd() ? 0x14 : 0x12);
             return;
