@@ -1,0 +1,9 @@
+# Crash Tag Team Racing (USA, SLUS-21191): the recompiler's settings
+[functions]
+# Function starts the analysis can't find (reached only through computed addresses)
+extra = []
+# Addresses that look like starts but aren't
+not = []
+
+[overrides]
+# address = "host function": replaced by the runtime or by src/

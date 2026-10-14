@@ -1,0 +1,31 @@
+# Build output
+build/
+__pycache__/
+*.pyc
+.DS_Store
+local.json
+
+# Game data never goes in this repository: the disc, its executable, its IOP modules and data files, and the C code recompiled
+# from the executable (generated into build/ or work/ on your own machine)
+work/
+generated/
+*.iso
+*.bin
+*.cue
+*.img
+*.IMG
+*.irx
+*.IRX
+*.DAT
+*.GSC
+*.RCF
+*.rcf
+*.bik
+*.elf
+SLUS_*
+SLES_*
+SCUS_*
+SCES_*
+
+# Milestone pictures show the game's own art: kept on this machine only
+milestones/*.png
