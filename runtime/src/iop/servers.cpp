@@ -144,8 +144,13 @@ void Heap(RpcCall& c)
         break;
     }
     case 2: // free
-        c.Out32(0, 0);
+    {
+        u32 at = c.In32(0);
+        bool freed = IopFree(at);
+        PS2_LOG(LogIop, "IOP heap: free %08x%s", at, freed ? "" : " (not allocated)");
+        c.Out32(0, freed ? 0 : static_cast<u32>(-1));
         break;
+    }
     default:
         Unhandled(c);
         break;

@@ -137,7 +137,7 @@ time). RPC servers stand in for the modules:
 | Server | Status |
 |---|---|
 | loadfile (0x80000006) | module loads succeed (the IOP modules themselves are never run); version calls answer the IOPRP image's release |
-| iop heap (0x80000003) | allocations in the IOP memory |
+| iop heap (0x80000003) | allocations and frees in the IOP memory (first fit, from 64 KB up: no module of the console's takes room) |
 | fileio (0x80000001) | open, read, lseek, close on the disc image; SDK 2.5's asynchronous completion (result written, semaphore signalled) |
 | cdvd (0x80000592-0x8000059C) | init, media mode, disk type, disk ready, search file |
 | padman (0x80000100) | SDK 2.x libpad: port open/close, main mode, pressure mode, actuators; port 0 has a DualShock 2 whose two frames in EE memory are rewritten at every vblank (`iop/padman.cpp`) |

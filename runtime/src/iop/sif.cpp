@@ -22,7 +22,10 @@ u32 g_eeRecvBuf = 0;
 u32 g_iopSregs[32] = {};
 std::deque<std::vector<u8>> g_replies;
 bool g_inFlight = false;
-u32 g_heapNext = IopHeapBase;
+// The heap: first fit over the free blocks (start to size), a freed block joined to its free neighbours
+std::mutex g_heapLock;
+std::map<u32, u32> g_heapFree = {{IopHeapBase, IopRamSize - IopHeapBase}};
+std::map<u32, u32> g_heapUsed;
 
 constexpr u32 SIF_CMD_CHANGE_SADDR = 0x80000000;
 constexpr u32 SIF_CMD_SET_SREG = 0x80000001;
@@ -210,13 +213,59 @@ u8* IopMem() { return g_iopMem; }
 
 u32 IopAlloc(u32 size)
 {
-    u32 at = (g_heapNext + 63) & ~63u;
-    g_heapNext = at + size;
-    if (g_heapNext > IopRamSize)
+    std::lock_guard<std::mutex> lock(g_heapLock);
+    u32 need = std::max<u32>((size + 63) & ~63u, 64);
+    for (auto it = g_heapFree.begin(); it != g_heapFree.end(); ++it)
     {
-        Fatal("IOP memory full");
+        if (it->second < need)
+        {
+            continue;
+        }
+        u32 at = it->first;
+        u32 left = it->second - need;
+        g_heapFree.erase(it);
+        if (left > 0)
+        {
+            g_heapFree[at + need] = left;
+        }
+        g_heapUsed[at] = need;
+        return at;
     }
-    return at;
+    u32 free = 0;
+    for (const auto& [at, n] : g_heapFree)
+    {
+        free += n;
+    }
+    Fatal("IOP memory full: %u bytes asked for, %u free in %zu blocks", size, free, g_heapFree.size());
+}
+
+bool IopFree(u32 at)
+{
+    std::lock_guard<std::mutex> lock(g_heapLock);
+    auto used = g_heapUsed.find(at);
+    if (used == g_heapUsed.end())
+    {
+        return false;
+    }
+    u32 start = at;
+    u32 size = used->second;
+    g_heapUsed.erase(used);
+    auto next = g_heapFree.find(start + size);
+    if (next != g_heapFree.end())
+    {
+        size += next->second;
+        g_heapFree.erase(next);
+    }
+    auto prev = g_heapFree.lower_bound(start);
+    if (prev != g_heapFree.begin() && (--prev)->first + prev->second == start)
+    {
+        prev->second += size;
+    }
+    else
+    {
+        g_heapFree[start] = size;
+    }
+    return true;
 }
 
 void IopReset()

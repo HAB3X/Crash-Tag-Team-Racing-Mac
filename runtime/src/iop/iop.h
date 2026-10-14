@@ -9,9 +9,13 @@ namespace Ps2
 // Where things live in the IOP's 2 MB
 constexpr u32 IopCmdBuffer = 0x00001000;
 constexpr u32 IopServerBase = 0x00002000;
-constexpr u32 IopHeapBase = 0x00100000;
+// The rest is the heap (the iop heap server's allocations and the servers' receive buffers): no module of the console's runs
+// here, so a game finds at least the room it would on the console (CTTR asks for 264 KB after binding 14 servers)
+constexpr u32 IopHeapBase = 0x00010000;
 
 u32 IopAlloc(u32 size);
+// An allocation given back: false if nothing was allocated there
+bool IopFree(u32 at);
 void IopReset();
 // The IOP replacement image the reset loads (its name gives the modules' version)
 void IopSetImage(const std::string& path);
