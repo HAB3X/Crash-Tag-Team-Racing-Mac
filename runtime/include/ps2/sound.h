@@ -20,6 +20,9 @@ std::unique_lock<std::recursive_mutex> SoundLock();
 
 // The IOP's hardware timer for the driver's thread: the function runs every so many of the SPU2's samples (48,000 a second)
 void SoundSetTimer(u32 samples, std::function<void()> tick);
+// More timers of the same kind (another module's alarm): an ID to remove it by
+int SoundAddTimer(u32 samples, std::function<void()> tick);
+void SoundRemoveTimer(int id);
 
 // libsd: its calls with their arguments (libsd.h's entries: a voice's parameter is (register << 8) | (voice << 1) | core, a
 // core's is (register << 8) | core; addresses are bytes in the sound memory), done as LIBSD.IRX does them at the SPU2's
@@ -34,6 +37,13 @@ u32 SdGetAddr(u16 entry);
 void SdSetCoreAttr(u16 entry, u16 value);
 // sceSdVoiceTrans's write (channel 0 or 1, mode 0): bytes into the sound memory at a byte address, done at once
 void SdVoiceTransWrite(u32 address, const void* data, u32 size);
+// sceSdBlockTrans's write in loop mode into a core's input (AutoDMA): the buffer (in the IOP's memory) played round a half at a
+// time, the transfer's interrupt (sceSdSetTransIntrHandler's handler) as each half has been taken and the other one starts.
+// Stop ends it and clears the input
+void SdBlockTransLoop(s32 core, u32 iopAddress, u32 size, std::function<void(s32 core)> interrupt);
+void SdBlockTransStop(s32 core);
+// sceSdBlockTransStatus: the half being taken (bit 24) and the address it's taken from
+u32 SdBlockTransStatus(s32 core);
 
 // The disc (any thread): a file by its path ("\\SFX.DAT" or "/SFX.DAT"), its first sector and size; sectors of 2048 bytes
 bool DiscFind(const std::string& path, u32& lsn, u32& size);

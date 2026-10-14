@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <map>
 #include <thread>
 #include <vector>
 
@@ -35,10 +36,15 @@ std::atomic<bool> g_running = false;
 std::atomic<bool> g_paused = false;
 std::atomic<float> g_gain = 1.0f;
 
-// The timer: its period and function, and the samples left until it runs
-u32 g_timerPeriod = 0;
-u32 g_timerLeft = 0;
-std::function<void()> g_timer;
+// The timers: each one's period, function and the samples left until it runs; the driver's (SoundSetTimer) is ID 0
+struct Timer
+{
+    u32 period;
+    u32 left;
+    std::function<void()> tick;
+};
+std::map<int, Timer> g_timers;
+int g_nextTimer = 1;
 
 // A 16 bit stereo WAV file; its header's sizes are rewritten every half second so it's readable however the run ends
 FILE* g_wav = nullptr;
@@ -88,10 +94,16 @@ void Make(s16* out, u32 frames)
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     for (u32 i = 0; i < frames; i++)
     {
-        if (g_timerPeriod != 0 && --g_timerLeft == 0)
+        for (auto it = g_timers.begin(); it != g_timers.end();)
         {
-            g_timerLeft = g_timerPeriod;
-            g_timer();
+            // The function may remove its own timer
+            auto here = it++;
+            if (here->second.period != 0 && --here->second.left == 0)
+            {
+                here->second.left = here->second.period;
+                std::function<void()> tick = here->second.tick;
+                tick();
+            }
         }
         Spu2::Stereo s = Spu2::Tick();
         out[i * 2] = static_cast<s16>(std::clamp(s.left, -0x8000, 0x7FFF));
@@ -158,9 +170,21 @@ std::unique_lock<std::recursive_mutex> SoundLock() { return std::unique_lock<std
 void SoundSetTimer(u32 samples, std::function<void()> tick)
 {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
-    g_timer = std::move(tick);
-    g_timerPeriod = samples;
-    g_timerLeft = samples;
+    g_timers[0] = {samples, samples, std::move(tick)};
+}
+
+int SoundAddTimer(u32 samples, std::function<void()> tick)
+{
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    int id = g_nextTimer++;
+    g_timers[id] = {samples, samples, std::move(tick)};
+    return id;
+}
+
+void SoundRemoveTimer(int id)
+{
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    g_timers.erase(id);
 }
 
 void SoundPause(bool paused)

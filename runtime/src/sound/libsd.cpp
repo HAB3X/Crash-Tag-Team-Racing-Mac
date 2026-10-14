@@ -3,6 +3,7 @@
 // address registers' halves (bits 17-20, then bits 1-16 with the low three cleared), and sceSdInit's writes were read from the
 // module's code (SDK 2.5's LIBSD.IRX, as Wrath of Cortex has it)
 #include "../runtime.h"
+#include "ps2/iop.h"
 #include "ps2/sound.h"
 #include "spu2.h"
 
@@ -178,5 +179,59 @@ void SdInit()
     Write(0x342, 0);
     Write(0x740, 0);
     Write(0x742, 0);
+}
+
+namespace
+{
+// A core's looping block transfer: the buffer, its size, the half being taken, the handler
+struct BlockTrans
+{
+    bool on = false;
+    u32 address = 0;
+    u32 size = 0;
+    u32 half = 0;
+    std::function<void(s32)> interrupt;
+};
+BlockTrans g_blockTrans[2];
+
+// The SPU2's DMA interrupts (its own interrupt line is nobody's yet): a looping transfer goes on with its other half, then its
+// handler runs
+void SpuInterrupt(s32 line)
+{
+    s32 core = line == Spu2::Dma4Interrupt ? 0 : line == Spu2::Dma7Interrupt ? 1 : -1;
+    if (core < 0 || !g_blockTrans[core].on)
+    {
+        return;
+    }
+    BlockTrans& t = g_blockTrans[core];
+    t.half ^= 1;
+    Spu2::DmaWrite(core, reinterpret_cast<const u16*>(IopMemory(t.address + t.half * (t.size / 2))), t.size / 4);
+    if (t.interrupt)
+    {
+        t.interrupt(core);
+    }
+}
+}
+
+void SdBlockTransLoop(s32 core, u32 iopAddress, u32 size, std::function<void(s32 core)> interrupt)
+{
+    BlockTrans& t = g_blockTrans[core & 1];
+    t = {true, iopAddress, size, 0, std::move(interrupt)};
+    Spu2::SetInterruptFunction(SpuInterrupt);
+    // AutoDMA on for the core (ADMAS), then the first half
+    Write(0x1B0 + (core & 1) * 0x400, static_cast<u16>(1 << (core & 1)));
+    Spu2::DmaWrite(core & 1, reinterpret_cast<const u16*>(IopMemory(iopAddress)), size / 4);
+}
+
+void SdBlockTransStop(s32 core)
+{
+    g_blockTrans[core & 1] = {};
+    Write(0x1B0 + (core & 1) * 0x400, 0);
+}
+
+u32 SdBlockTransStatus(s32 core)
+{
+    const BlockTrans& t = g_blockTrans[core & 1];
+    return t.on ? (t.half << 24) | ((t.address + t.half * (t.size / 2)) & 0xFFFFFF) : 0;
 }
 }

@@ -161,7 +161,9 @@ sound memory (sceSdVoiceTrans, done at once).
 The output (`sound/output.cpp`) is 48 kHz stereo through an SDL3 audio stream whose callback makes the samples SDL asks for, on
 SDL's audio thread; with no device (`--headless`, `--mute`) a thread of its own makes them at the wall clock's pace. A driver's
 own thread (the module's, woken by the IOP's hardware timer) is a function the runtime runs every so many samples
-(`SoundSetTimer`), so it sees the voices where they are in the sound it's making. The SPU2 and the driver's state belong to
+(`SoundSetTimer`; another module's alarms `SoundAddTimer`), so it sees the voices where they are in the sound it's making.
+`SdBlockTransLoop` is sceSdBlockTrans's looping write into a core's input (AutoDMA): a buffer in the IOP's memory played a
+half at a time, the transfer's interrupt handler run as each half has been taken (CTTR's movies' sound). The SPU2 and the driver's state belong to
 whoever holds the sound lock: the making of a few hundred samples at a time, or the RPC server answering a call on the game's
 thread; neither waits for anything else. `--audio-dump FILE.wav` writes everything made to a WAV file.
 
@@ -274,7 +276,7 @@ second; `--log` turns on the channels' logs; `--audio-dump FILE.wav` keeps the s
 
 ### Not done yet
 
-The SPU2's DMA timing and AutoDMA input from the IOP's side (no driver uses them yet), libsd's reverb presets, rumble, the
+The SPU2's DMA timing, libsd's reverb presets, rumble, the
 memory card's newer protocol (libmc 2.6 on), movies (IPU), the VU flags in macro mode, the FPU's exact rounding.
 
 ## Repositories and licences
