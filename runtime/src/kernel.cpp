@@ -967,8 +967,10 @@ const char* SyscallName(int n)
     case 0x15: return "DisableIntc";
     case 0x16: return "EnableDmac";
     case 0x17: return "DisableDmac";
-    case 0x18: return "SetAlarm";
-    case 0x19: return "ReleaseAlarm";
+    case 0x18: case 0xFC: return "SetAlarm";
+    case 0x19: case 0xFD: return "ReleaseAlarm";
+    case 0x1E: case 0xFE: return "iSetAlarm";
+    case 0x1F: case 0xFF: return "iReleaseAlarm";
     case 0x20: return "CreateThread";
     case 0x22: return "StartThread";
     case 0x29: return "ChangeThreadPriority";
@@ -1271,6 +1273,8 @@ extern "C" void ps2_syscall(Ps2Cpu* c, u32 pc)
     }
     case 0x18: // SetAlarm(ticks in hsyncs, handler, arg)
     case 0x1E:
+    case 0xFC: // libkernel 2.7 on: its own SetAlarm and iSetAlarm (0xFE), which its kernel patch (0x5B) puts at 0xFC-0xFF
+    case 0xFE:
     {
         Alarm a;
         a.id = g_nextAlarm++;
@@ -1285,6 +1289,8 @@ extern "C" void ps2_syscall(Ps2Cpu* c, u32 pc)
     }
     case 0x19: // ReleaseAlarm
     case 0x1F:
+    case 0xFD: // libkernel 2.7 on: ReleaseAlarm and iReleaseAlarm (0xFF)
+    case 0xFF:
     {
         int id = static_cast<s32>(Arg(c, 0));
         auto it = std::find_if(g_alarms.begin(), g_alarms.end(), [&](const Alarm& a) { return a.id == id; });
