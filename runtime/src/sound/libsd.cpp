@@ -7,6 +7,10 @@
 #include "ps2/sound.h"
 #include "spu2.h"
 
+#include <algorithm>
+#include <cstring>
+#include <vector>
+
 namespace Ps2
 {
 namespace
@@ -233,5 +237,223 @@ u32 SdBlockTransStatus(s32 core)
 {
     const BlockTrans& t = g_blockTrans[core & 1];
     return t.on ? (t.half << 24) | ((t.address + t.half * (t.size / 2)) & 0xFFFFFF) : 0;
+}
+
+namespace
+{
+// libsd's reverb presets (sceSdSetEffectAttr, export 23): ten entries of 0x44 bytes, each a mask of the fields to write (0:
+// all) and 32 halfwords: the two all-pass filters' sizes, the IIR's, four combs', the wall's and the two all-pass filters'
+// volumes (0x774 on), the 20 offsets from 0x2EC on, the input's coefficients (0x784, 0x786). The sizes and offsets are in
+// 8 byte units, written as halfword addresses (times 4) from the work area's start. Each preset's work area size (in the
+// same units) is in a table of ten words 0x28 bytes before them. LIBSD.IRX's .data holds them: found by their shape (every
+// mask 0, every preset but the first, which is the reverb off, ending with the input coefficients 0x8000), they're the
+// game's own values (SDK 2.5's and 2.8's are the same; the room preset's first 16 are the PlayStation's documented ones)
+constexpr u32 EffectPresets = 10;
+constexpr u32 PresetBytes = 0x44;
+constexpr u32 PresetFields = 32;
+struct EffectTables
+{
+    bool found = false;
+    u16 presets[EffectPresets][PresetFields] = {};
+    u32 sizes[EffectPresets] = {};
+};
+EffectTables g_effects;
+
+// Each core's preset, delay and feedback, as libsd keeps them
+struct EffectState
+{
+    u32 mode = 0;
+    u32 delay = 0;
+    u32 feedback = 0;
+};
+EffectState g_effectState[2];
+
+u32 Get32(const u8* p) { return static_cast<u32>(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24)); }
+u16 Get16(const u8* p) { return static_cast<u16>(p[0] | (p[1] << 8)); }
+
+bool PresetsAt(const u8* data, size_t size, size_t at)
+{
+    if (at < 0x28 || at + EffectPresets * PresetBytes > size)
+    {
+        return false;
+    }
+    for (u32 k = 0; k < EffectPresets; k++)
+    {
+        const u8* preset = data + at + k * PresetBytes;
+        if (Get32(preset) != 0 || Get32(data + at - 0x28 + k * 4) == 0)
+        {
+            return false;
+        }
+        if (k > 0 && (Get16(preset + 0x40) != 0x8000 || Get16(preset + 0x42) != 0x8000))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The work area's end: EEA's high bits, the rest ones
+u32 EffectEnd(s32 core) { return SdGetAddr(static_cast<u16>(SD_A_EEA | core)); }
+
+// A preset's field written to its register (sceSdSetEffectAttr's 0x13C)
+void WriteEffectField(s32 core, u32 field, u16 value)
+{
+    if (field < 2 || (field >= 10 && field < 30))
+    {
+        u32 reg = static_cast<u32>(core) * 0x400 + (field < 2 ? 0x2E4 + field * 4 : 0x2EC + (field - 10) * 4);
+        u32 halfwords = static_cast<u32>(value) * 4;
+        Write(reg, static_cast<u16>(halfwords >> 16));
+        Write(reg + 2, static_cast<u16>(halfwords));
+        return;
+    }
+    Write(static_cast<u32>(core) * 0x28 + (field < 10 ? 0x774 + (field - 2) * 2 : 0x784 + (field - 30) * 2), value);
+}
+}
+
+void SdModuleLoaded(const u8* elf, size_t size)
+{
+    if (size < 52 || Get32(elf) != 0x464C457F)
+    {
+        return;
+    }
+    u32 phoff = Get32(elf + 28);
+    u32 phentsize = Get16(elf + 42), phnum = Get16(elf + 44);
+    std::vector<size_t> found;
+    const u8* data = nullptr;
+    size_t dataSize = 0;
+    for (u32 i = 0; i < phnum && phoff + (i + 1) * phentsize <= size; i++)
+    {
+        const u8* ph = elf + phoff + i * phentsize;
+        u32 offset = Get32(ph + 4), fileSize = Get32(ph + 16);
+        if (Get32(ph) != 1 || offset > size || fileSize > size - offset)
+        {
+            continue;
+        }
+        data = elf + offset;
+        dataSize = fileSize;
+        for (size_t at = 0x28; at + EffectPresets * PresetBytes <= dataSize; at += 4)
+        {
+            if (PresetsAt(data, dataSize, at))
+            {
+                found.push_back(at);
+            }
+        }
+        break;
+    }
+    if (found.size() != 1)
+    {
+        Log("libsd: LIBSD.IRX's reverb presets %s: the reverb presets stay off", found.empty() ? "not found" : "found twice");
+        return;
+    }
+    auto lock = SoundLock();
+    for (u32 k = 0; k < EffectPresets; k++)
+    {
+        g_effects.sizes[k] = Get32(data + found[0] - 0x28 + k * 4);
+        for (u32 f = 0; f < PresetFields; f++)
+        {
+            g_effects.presets[k][f] = Get16(data + found[0] + k * PresetBytes + 4 + f * 2);
+        }
+    }
+    g_effects.found = true;
+    PS2_LOG(LogIop, "libsd: the reverb presets at %zx in LIBSD.IRX's image", found[0]);
+}
+
+// sceSdClearEffectWorkArea (export 25): the preset's work area zeroed below the end address. libsd sends zeros through the
+// channel's DMA; done at once here
+s32 SdClearEffectWorkArea(s32 core, s32 channel, u32 mode)
+{
+    (void)channel;
+    u32 preset = mode & 0xFF;
+    if (preset >= EffectPresets)
+    {
+        return -100;
+    }
+    if (preset == 0)
+    {
+        return 0;
+    }
+    if (!g_effects.found)
+    {
+        if (Once("libsd clear effect"))
+        {
+            Log("libsd: a reverb work area's clearing asked for, without LIBSD.IRX's presets: not done");
+        }
+        return 0;
+    }
+    static const std::vector<u8> zeros(EffectPresets * 0x10000, 0);
+    u32 bytes = g_effects.sizes[preset] * 8;
+    SdVoiceTransWrite(EffectEnd(core & 1) - bytes + 1, zeros.data(), std::min<u32>(bytes, static_cast<u32>(zeros.size())));
+    return 0;
+}
+
+// sceSdSetEffectAttr (export 23), as LIBSD.IRX does it: the core's effects turned off while its registers change, the old
+// work area cleared first if asked and the effects were on, the depths, the preset's registers (the echo and delay presets'
+// offsets moved by the delay and the wall's volume set by the feedback), the work area's start (ESA) below the end address
+// by the preset's size, the new area cleared if asked, and the effects back on if they were
+s32 SdSetEffectAttr(s32 core, u32 mode, u16 depthLeft, u16 depthRight, u32 delay, u32 feedback)
+{
+    core &= 1;
+    u32 c = static_cast<u32>(core) * 0x400;
+    u32 preset = mode & 0xFF;
+    if (preset >= EffectPresets)
+    {
+        return -100;
+    }
+    if (!g_effects.found)
+    {
+        if (preset != 0 && Once("libsd effect presets"))
+        {
+            Log("libsd: reverb preset %u asked for, without LIBSD.IRX's presets: only its depths set", preset);
+        }
+        Write(0x764 + static_cast<u32>(core) * 0x28, depthLeft);
+        Write(0x766 + static_cast<u32>(core) * 0x28, depthRight);
+        return 0;
+    }
+    bool clear = (mode & 0x100) != 0;
+    s32 channel = (mode & 0x200) != 0 ? 1 : 0;
+    EffectState& state = g_effectState[core];
+    u32 previous = state.mode;
+    state.mode = preset;
+    u16 fields[PresetFields];
+    std::memcpy(fields, g_effects.presets[preset], sizeof(fields));
+    state.delay = preset == 7 || preset == 8 ? 0x80 : 0;
+    state.feedback = preset == 7 ? 0x80 : 0;
+    if (preset == 7 || preset == 8)
+    {
+        state.delay = delay;
+        state.feedback = feedback;
+        u32 d = delay + 1;
+        fields[10] = static_cast<u16>(d * 64 - fields[0]);
+        fields[11] = static_cast<u16>(d * 32 - fields[1]);
+        fields[16] = static_cast<u16>(fields[17] + d * 32);
+        fields[12] = static_cast<u16>(fields[13] + d * 32);
+        fields[27] = static_cast<u16>(fields[29] + d * 32);
+        fields[26] = static_cast<u16>(fields[28] + d * 32);
+        fields[7] = static_cast<u16>(feedback * 258);
+    }
+    u32 start = EffectEnd(core) - (g_effects.sizes[preset] * 8 - 1);
+    bool enabled = (Read(0x19A + c) & 0x80) != 0;
+    if (enabled)
+    {
+        Write(0x19A + c, static_cast<u16>(Read(0x19A + c) & ~0x80));
+    }
+    s32 result = enabled && clear ? SdClearEffectWorkArea(core, channel, previous) : 0;
+    if (result >= 0)
+    {
+        Write(0x764 + static_cast<u32>(core) * 0x28, depthLeft);
+        Write(0x766 + static_cast<u32>(core) * 0x28, depthRight);
+        for (u32 f = 0; f < PresetFields; f++)
+        {
+            WriteEffectField(core, f, fields[f]);
+        }
+        Write(0x2E0 + c, static_cast<u16>(start >> 17));
+        Write(0x2E2 + c, static_cast<u16>(start >> 1));
+        result = clear ? SdClearEffectWorkArea(core, channel, preset) : 0;
+    }
+    if (enabled)
+    {
+        Write(0x19A + c, static_cast<u16>(Read(0x19A + c) | 0x80));
+    }
+    return result;
 }
 }

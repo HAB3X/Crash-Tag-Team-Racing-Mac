@@ -150,7 +150,7 @@ time). RPC servers stand in for the modules:
 | cdvd (0x80000592-0x8000059C) | init, media mode, disk type, the last error, the tray, disk ready (both libcdvd's), search file, reads |
 | padman (0x80000100) | SDK 2.x libpad: port open/close, main mode, pressure mode, actuators; port 0 has a DualShock 2 whose two frames in EE memory are rewritten at every vblank (`iop/padman.cpp`) |
 | mcserv (0x80000400) | the libmc of SDKs before 2.6: init, info, open, close, seek, read, write, flush, chdir, getdir, set file info, delete, format; each port's card is a host folder (`iop/mcserv.cpp`) |
-| sdrdrv | libsd's RPC server (sceSdRemote): init, the parameters, switches, addresses and core attributes on the runtime's libsd; the reverb off (its depths set); the reverb presets, their work areas' clearing and the transfers not done (logged) |
+| sdrdrv | libsd's RPC server (sceSdRemote): init, the parameters, switches, addresses and core attributes on the runtime's libsd; the reverb (sceSdSetEffectAttr: its sceSdEffectAttr's words are core, mode, the depths' halfwords, delay, feedback) and its work area's clearing, as LIBSD.IRX does them; the transfers not done (logged) |
 | a game's own modules | registered by the game (`ps2/iop.h`): RPC servers (WoC's NUSOUND, which drives the SPU2 through libsd, `ps2/sound.h`, below), modules started by name (CTTR's Bink IOP side) and their own SIF commands both ways (`IopRegisterCommand`; `IopSendCommand`, with data sent ahead into the EE's memory, from any thread: a command waits in an outbox while the SIF's lock is taken, and goes at the next SIF exchange or vblank) |
 
 The alternative, emulating the IOP's MIPS R3000 and running the real IRX modules, would bring sound and pads for free but needs an
@@ -170,8 +170,12 @@ The output (`sound/output.cpp`) is 48 kHz stereo through an SDL3 audio stream wh
 SDL's audio thread; with no device (`--headless`, `--mute`) a thread of its own makes them at the wall clock's pace. A driver's
 own thread (the module's, woken by the IOP's hardware timer) is a function the runtime runs every so many samples
 (`SoundSetTimer`; another module's alarms `SoundAddTimer`), so it sees the voices where they are in the sound it's making.
-`SdBlockTransLoop` is sceSdBlockTrans's looping write into a core's input (AutoDMA): a buffer in the IOP's memory played a
-half at a time, the transfer's interrupt handler run as each half has been taken (CTTR's movies' sound). The SPU2 and the driver's state belong to
+libsd's reverb (`SdSetEffectAttr`, `SdClearEffectWorkArea`) is LIBSD.IRX's: the effects off while the registers change, the
+preset's registers (its offsets in 8 byte units written as halfword addresses, the echo and delay presets' moved by their
+delay), the work area's start below the core's end address (EEA) by the preset's size, the area zeroed when asked. The ten
+presets and their sizes are the game's own LIBSD.IRX's, taken from the module as it's loaded (found in its data by their
+shape; SDK 2.5's and 2.8's hold the same values): none in the repository. `SdBlockTransLoop` is sceSdBlockTrans's looping
+write into a core's input (AutoDMA): a buffer in the IOP's memory played a half at a time, the transfer's interrupt handler run as each half has been taken (CTTR's movies' sound). The SPU2 and the driver's state belong to
 whoever holds the sound lock: the making of a few hundred samples at a time, or the RPC server answering a call on the game's
 thread; neither waits for anything else. `--audio-dump FILE.wav` writes everything made to a WAV file.
 
@@ -301,7 +305,7 @@ second; `--log` turns on the channels' logs; `--audio-dump FILE.wav` keeps the s
 
 ### Not done yet
 
-The SPU2's DMA timing, libsd's reverb presets, rumble, the
+The SPU2's DMA timing, rumble, the
 memory card's newer protocol (libmc 2.6 on), movies (IPU), the VU flags in macro mode, the FPU's exact rounding.
 
 ## Repositories and licences

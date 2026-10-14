@@ -44,6 +44,12 @@ void SdBlockTransLoop(s32 core, u32 iopAddress, u32 size, std::function<void(s32
 void SdBlockTransStop(s32 core);
 // sceSdBlockTransStatus: the half being taken (bit 24) and the address it's taken from
 u32 SdBlockTransStatus(s32 core);
+// sceSdSetEffectAttr: a core's reverb, from its sceSdEffectAttr's mode (a preset 0-9 in the low byte; 0x100 asks for the work
+// area cleared, 0x200 to clear it through DMA channel 1), depths, and the echo and delay presets' delay and feedback. The
+// presets are the game's LIBSD.IRX's own tables (none: only the depths are set, and it's logged). Returns libsd's result
+s32 SdSetEffectAttr(s32 core, u32 mode, u16 depthLeft, u16 depthRight, u32 delay, u32 feedback);
+// sceSdClearEffectWorkArea: a preset's work area zeroed below the core's end address (EEA)
+s32 SdClearEffectWorkArea(s32 core, s32 channel, u32 mode);
 
 // The disc (any thread): a file by its path ("\\SFX.DAT" or "/SFX.DAT"), its first sector and size; sectors of 2048 bytes
 bool DiscFind(const std::string& path, u32& lsn, u32& size);

@@ -144,6 +144,9 @@ std::string ModuleName(const u8* elf, size_t size)
     return "";
 }
 
+// LIBSD.IRX's name for itself: its reverb presets are libsd's (sound/libsd.cpp)
+const char* const LibsdName = "Sound_Device_Library";
+
 // A module loaded: its ID, and the game's own module of that name started with the arguments (arg_len bytes, each ending
 // with a zero)
 int ModuleLoaded(const std::string& name, const RpcCall& c, u32 argLength)
@@ -201,6 +204,10 @@ void LoadFile(RpcCall& c)
             std::vector<u8> elf((size + 2047) / 2048 * 2048);
             DiscReadSectors(lsn, static_cast<u32>(elf.size() / 2048), elf.data());
             name = ModuleName(elf.data(), size);
+            if (name == LibsdName)
+            {
+                SdModuleLoaded(elf.data(), size);
+            }
         }
         else
         {
@@ -217,6 +224,10 @@ void LoadFile(RpcCall& c)
     {
         u32 at = c.In32(0) & (IopRamSize - 1);
         std::string name = ModuleName(IopMem() + at, IopRamSize - at);
+        if (name == LibsdName)
+        {
+            SdModuleLoaded(IopMem() + at, IopRamSize - at);
+        }
         c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(4))));
         c.Out32(4, 0);
         return;
@@ -426,28 +437,15 @@ void Sdr(RpcCall& c)
     case 0x8070:
         SdSetCoreAttr(c.In16(4), c.In16(8));
         break;
-    case 0x8130: // sceSdSetEffectAttr(core, the sceSdEffectAttr at 0: core, mode, depth left, depth right, delay, feedback)
-    {
-        u16 mode = c.In16(2);
-        if ((mode & 0xFF) != 0)
-        {
-            // A reverb preset: libsd's tables of the reverb's registers for each aren't here yet
-            Unhandled(c);
-            break;
-        }
-        // The reverb off (mode 0; 0x100 asks for its work area cleared, see 0x8150): its registers stay as sceSdInit left
-        // them, zeros, so only the effect's output volumes, the depths, are set
-        SdSetParam(static_cast<u16>(SD_P_EVOLL | core), c.In16(4));
-        SdSetParam(static_cast<u16>(SD_P_EVOLR | core), c.In16(6));
+    case 0x8130: // sceSdSetEffectAttr(core, the sceSdEffectAttr at 0: core, mode, depth left and right (16 bits each), delay,
+                 // feedback); its own core word is libsd's to ignore
+        result = static_cast<u32>(SdSetEffectAttr(static_cast<s32>(core), c.In32(4), c.In16(8), c.In16(10), c.In32(12),
+                                                  c.In32(16)));
+        PS2_LOG(LogIop, "sdrdrv: core %u's reverb mode %#x, depths %04x %04x, delay %u, feedback %u: %d", core, c.In32(4),
+                c.In16(8), c.In16(10), c.In32(12), c.In32(16), static_cast<s32>(result));
         break;
-    }
     case 0x8150: // sceSdClearEffectWorkArea(core, channel, mode)
-        if ((c.In32(12) & 0xFF) != 0)
-        {
-            Unhandled(c);
-        }
-        // The reverb off's area (a few words at the effects' end address) isn't cleared: with its registers and depths zeros
-        // its output is silent whatever the area holds
+        result = static_cast<u32>(SdClearEffectWorkArea(static_cast<s32>(c.In32(4)), static_cast<s32>(c.In32(8)), c.In32(12)));
         break;
     default:
         Unhandled(c);

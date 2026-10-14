@@ -319,6 +319,11 @@ void SoundStop();
 void SoundPause(bool paused);
 void SoundSetGain(float gain);
 
+// --- sound/libsd.cpp
+// The game's LIBSD.IRX loaded (its file, or its image in the IOP's memory): its tables of the reverb's presets are kept for
+// SdSetEffectAttr
+void SdModuleLoaded(const u8* elf, size_t size);
+
 // --- iop/padman.cpp
 // The pads' frames, rewritten at each vertical blank (the IOP's PADMAN does it then)
 void PadVblank();
