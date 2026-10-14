@@ -865,6 +865,21 @@ std::string DisplayWindowSizeText(int choice)
 
 int DisplayWindowSizeCount() { return static_cast<int>(std::size(WindowSizes)); }
 
+void DisplayWindowPoints(int* width, int* height)
+{
+    DisplayGet(DisplaySetting::WindowSize);
+    *width = g_windowWidth;
+    *height = g_windowHeight;
+}
+
+void DisplaySetWindowPoints(int width, int height)
+{
+    g_windowWidth = width;
+    g_windowHeight = height;
+    ApplyWindow();
+    WriteGraphicsSettings();
+}
+
 void DisplayClose()
 {
     if (g_window != nullptr)

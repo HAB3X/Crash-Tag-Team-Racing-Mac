@@ -292,7 +292,8 @@ int g_boxChoice = 0;
 // A display change waiting to be kept (the countdown: the display mode and the window's size)
 bool g_keeping = false;
 int g_keepFullscreen = 0;
-int g_keepWindow = 0;
+int g_keepWidth = 0;
+int g_keepHeight = 0;
 Clock::time_point g_keepStart;
 constexpr float KeepSeconds = 15.0f;
 
@@ -760,11 +761,11 @@ void EndKeeping(bool keep)
 {
     if (!keep)
     {
-        DisplaySet(DisplaySetting::Fullscreen, g_keepFullscreen);
-        if (g_keepFullscreen == 0 && g_keepWindow >= 0)
+        if (g_keepFullscreen == 0)
         {
-            DisplaySet(DisplaySetting::WindowSize, g_keepWindow);
+            DisplaySetWindowPoints(g_keepWidth, g_keepHeight);
         }
+        DisplaySet(DisplaySetting::Fullscreen, g_keepFullscreen);
     }
     g_keeping = false;
 }
@@ -815,13 +816,15 @@ void Step(Row& row, int by)
     if (next != value)
     {
         int fullscreen = DisplayGet(DisplaySetting::Fullscreen);
-        int window = DisplayGet(DisplaySetting::WindowSize);
+        int width = 0, height = 0;
+        DisplayWindowPoints(&width, &height);
         row.set(next);
         if (row.asksToKeep && !g_options.headless)
         {
             g_keeping = true;
             g_keepFullscreen = fullscreen;
-            g_keepWindow = window;
+            g_keepWidth = width;
+            g_keepHeight = height;
             g_keepStart = Clock::now();
         }
     }

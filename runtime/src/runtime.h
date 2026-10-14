@@ -245,6 +245,9 @@ int DisplayGet(DisplaySetting setting);
 void DisplaySet(DisplaySetting setting, int value);
 std::string DisplayWindowSizeText(int choice);
 int DisplayWindowSizeCount();
+// The window's size in points as it is, and put back (the menus' countdown going back)
+void DisplayWindowPoints(int* width, int* height);
+void DisplaySetWindowPoints(int width, int height);
 
 // --- input.cpp: port 0's controller from the keyboard, a gamepad and --press
 u32 ButtonsFromNames(const std::string& names);
