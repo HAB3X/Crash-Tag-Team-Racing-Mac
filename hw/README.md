@@ -27,6 +27,10 @@ here unchanged except for:
   half a line past a whole one taken as the whole one while SMODE2 is interlaced and in field mode): shown one field after
   another on a computer's screen, the half line made the picture shake
 
+- `hw/hwgs.cpp`: the primitives of a batch that read the target they draw into read one copy of it made when the batch began
+  (`selfCopyFor_`, as PCSX2's hardware renderers do), instead of a copy of the whole target and two render passes for each
+  primitive; WoC's Warp Room has about 300 such primitives a frame and went from 10-20 frames a second at 3x to 60.
+  `TWIN_HW_EXACT_FEEDBACK=1` copies for each primitive again
 - `gs/workers.cpp`: the workers ask macOS for the performance cores (QoS user interactive): rows are shared out evenly, so
   a worker on an efficiency core held every primitive up
 

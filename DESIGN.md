@@ -163,6 +163,10 @@ upscaled on the GPU, a bicubic pass), or `$PS2_GS`, `$PS2_GS_SCALE`, `$PS2_TEXTU
 folder (written with the defaults the first time). The software GS (the PS2's own rules at its resolution) draws when it's asked
 for, when there's no OpenGL 3.3 and with `PS2_RENDER_THREAD=0` (the GPU's context belongs to the render thread).
 
+Primitives that read the buffer they draw into (WoC's Warp Room draws about 300 a frame) read one copy of it made when their
+batch began, as PCSX2's hardware renderers do, instead of a copy and two render passes each: the Warp Room went from 10-20
+frames a second at 3x to 60.
+
 A game that draws each field of an interlaced picture on its own (SMODE2's INT and FFMD; WoC does) moves its drawing half a
 line on every other field with XYOFFSET (the SDK's sceGsSetHalfOffset), for a TV that shows the fields half a line apart.
 Shown one field after another in the same place, the picture shook by half a line at 30 Hz: the GS drops that half line
