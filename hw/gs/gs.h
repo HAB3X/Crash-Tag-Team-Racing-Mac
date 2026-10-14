@@ -505,6 +505,12 @@ public:
 
     // SIGNAL, FINISH and LABEL writes, told to whoever runs the GS's CSR (ps2-native-runtime's addition)
     void (*eventHook)(u32 address, u64 value) = nullptr;
+    // Field rendering drawn steady (ps2-native-runtime's addition): a game that draws each field of an interlaced picture on its
+    // own (SMODE2's INT and FFMD) moves its drawing half a line on every other field (the SDK's sceGsSetHalfOffset adds 8, half
+    // a line, to XYOFFSET's OFY) for the TV, which shows the fields half a line apart. Shown one after another in the same
+    // place, as a computer's screen shows them, the picture shakes by half a line. On: an OFY half a line past a whole one is
+    // taken as the whole one while the display is in field mode, so both fields are drawn alike
+    bool steadyFields = false;
 
     // The privileged registers (the PCRTC's: PMODE, SMODE2, DISPFB1/2, DISPLAY1/2, BGCOLOR)
     RegPmode pmode = {};

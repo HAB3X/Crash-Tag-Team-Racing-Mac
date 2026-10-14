@@ -147,6 +147,31 @@ the pipelines' timing. It is game-neutral: Twinsanity's own renderer reached it 
 The runtime wires it: VU1's XGKICK to the GIF, VU0's registers to the recompiled code, the GS's SIGNAL/FINISH to the CSR, and
 the PCRTC's picture to the presenter at each vblank (an SDL3 window, or PNGs with `--headless --snapshots`).
 
+### The picture (`display.cpp`)
+
+The GS draws on the GPU: the hardware layer's OpenGL 3.3 renderer (`hw/hw/hwgs.*`) takes each primitive from the GS's front end
+and draws it into render targets at a multiple of the PS2's resolution (3x by default: a 640x224 field is drawn at 1920x672),
+keeping them and the GS's local memory in step page by page; what it can't draw exactly is left to the software rasteriser.
+It runs on the render thread with an OpenGL context of its own, made on the main thread (SDL's windows are the main thread's)
+sharing the window's textures. At each vblank the render thread copies the shown picture into one of three textures and
+fences the copy; the window (its own context, on the main thread) draws the newest one at 4:3, letterboxed, once the fence is
+passed, and fences its drawing so the render thread doesn't copy into a texture still being drawn (the Crash Twinsanity port's
+hand-over). Snapshots read the picture back at the internal resolution. Headless, the context has a hidden window.
+
+The settings: `--gs hardware|software`, `--scale 1-8` and `--texture-upscale 0|2|4` (the textures decoded from the game's data
+upscaled on the GPU, a bicubic pass), or `$PS2_GS`, `$PS2_GS_SCALE`, `$PS2_TEXTURE_UPSCALE`, or `graphics.txt` in the settings
+folder (written with the defaults the first time). The software GS (the PS2's own rules at its resolution) draws when it's asked
+for, when there's no OpenGL 3.3 and with `PS2_RENDER_THREAD=0` (the GPU's context belongs to the render thread).
+
+Primitives that read the buffer they draw into (WoC's Warp Room draws about 300 a frame) read one copy of it made when their
+batch began, as PCSX2's hardware renderers do, instead of a copy and two render passes each: the Warp Room went from 10-20
+frames a second at 3x to 60.
+
+A game that draws each field of an interlaced picture on its own (SMODE2's INT and FFMD; WoC does) moves its drawing half a
+line on every other field with XYOFFSET (the SDK's sceGsSetHalfOffset), for a TV that shows the fields half a line apart.
+Shown one field after another in the same place, the picture shook by half a line at 30 Hz: the GS drops that half line
+(`Gs::steadyFields`), so both fields are drawn alike. `PS2_STEADY_FIELDS=0` keeps it.
+
 ### The render thread
 
 The GS's side (the GIF's paths, the GS's registers, local memory, drawing and the PCRTC's picture) runs on a thread of its
@@ -190,7 +215,7 @@ second; `--log` turns on the channels' logs.
 ### Not done yet
 
 Sound (SPU2 and the game's sound driver), rumble, the memory card's newer protocol (libmc 2.6 on), movies (IPU), MFIFO, the VU flags in macro mode, the FPU's
-exact rounding, and the OpenGL renderer's hookup (the software GS draws).
+exact rounding.
 
 ## Repositories and licences
 

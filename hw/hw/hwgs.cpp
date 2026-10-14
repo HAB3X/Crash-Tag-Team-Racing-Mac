@@ -1225,6 +1225,13 @@ private:
     const Program& ProgramFor(u32 bits);
     GLuint FramebufferFor(Target* colour, Target* depth);
     GLuint CopyOf(Target* target);
+    // The target the open batch draws into and reads a copy of, made when the batch began (ps2-native-runtime's addition):
+    // a primitive that reads the buffer it draws into joins the batch instead of copying the target again. The GS's next
+    // primitive reads what the one before drew, so each would need a copy and two render passes of its own: hundreds a frame
+    // in WoC's Warp Room, each a copy of the whole target. Like PCSX2's hardware renderers, the primitives of a
+    // batch read the target as it was before the batch. TWIN_HW_EXACT_FEEDBACK=1: a copy for each primitive
+    Target* selfCopyFor_ = nullptr;
+    GLuint selfCopy_ = 0;
     GLuint CopyTarget(Target* target, const Rect* region = nullptr);
     Target* ScratchStencil(Target* colour);
     void Staging(u32 width, u32 height, bool depth, GLuint* texture, GLuint* fbo);
@@ -1414,6 +1421,12 @@ f32 VertexNudge()
     static const f32 nudge = std::getenv("TWIN_HW_VERTEX_OFFSET") != nullptr ? static_cast<f32>(std::atof(std::getenv("TWIN_HW_VERTEX_OFFSET"))) / 256.0f
                                                                           : 0.0f;
     return nudge;
+}
+// TWIN_HW_EXACT_FEEDBACK=1: each primitive reading the target it draws into gets a copy of its own (see selfCopyFor_)
+bool ExactFeedback()
+{
+    static const bool exact = std::getenv("TWIN_HW_EXACT_FEEDBACK") != nullptr && std::getenv("TWIN_HW_EXACT_FEEDBACK")[0] == '1';
+    return exact;
 }
 int g_DitherMode = 2;
 int g_FilterMode = 0;
@@ -3969,7 +3982,8 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         return true;
     }
 
-    // The texture
+    // The texture (selfRead: the target's own copy)
+    bool selfRead = false;
     u32 program = 0;
     bool textureFromScaled = false;
     GLuint texture = 0;
@@ -4062,7 +4076,23 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
                 Resolve(source);
             }
 
-            texture = source == colour ? CopyOf(source) : source->texture;
+            if (source != colour)
+            {
+                texture = source->texture;
+            }
+            else if (selfCopyFor_ == colour && batching_ && !ExactFeedback())
+            {
+                // The batch drawing into it already reads a copy of it, made at its start
+                texture = selfCopy_;
+                selfRead = true;
+            }
+            else
+            {
+                texture = CopyOf(source);
+                selfCopyFor_ = colour;
+                selfCopy_ = texture;
+                selfRead = true;
+            }
             key.texWidth = static_cast<f32>(source->width);
             key.texHeight = static_cast<f32>(source->height);
             static const bool noSnap = std::getenv("TWIN_HW_NO_SNAP") != nullptr;
@@ -4463,6 +4493,14 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         }
     }
 
+    if (selfRead && selfCopyFor_ != colour)
+    {
+        // The batch whose copy it was going to read was drawn first: a copy with that batch's drawing
+        key.texture = CopyOf(colour);
+        selfCopyFor_ = colour;
+        selfCopy_ = key.texture;
+    }
+
     static const char* tracePrim = std::getenv("TWIN_HW_TRACE_PRIM");
     if (tracePrim != nullptr && std::strtoull(tracePrim, nullptr, 10) == gs_.primitivesDrawn)
     {
@@ -4625,6 +4663,7 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
 
 void HwGs::Flush()
 {
+    selfCopyFor_ = nullptr;
     if (!batching_ || vertexes_.empty())
     {
         batching_ = false;

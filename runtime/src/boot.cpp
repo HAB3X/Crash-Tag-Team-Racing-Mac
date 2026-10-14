@@ -21,8 +21,10 @@ void Usage(const char* program)
             "usage: %s --disc IMAGE [--headless] [--snapshots DIR] [--snapshot-every S] [--snapshot-at S,S,...]\n"
             "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq]\n"
             "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--press S:BUTTON[+BUTTON][:HOLD],...]\n"
-            "          [--type S:TEXT] [--click S:X,Y]\n"
-            "          [--fps]\n",
+            "          [--type S:TEXT] [--click S:X,Y]
+"
+            "          [--fps] [--gs hardware|software] [--scale 1-8] [--texture-upscale 0|2|4]
+",
             program);
 }
 
@@ -159,6 +161,19 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
                 }
                 start = comma + 1;
             }
+        }
+        else if (a == "--gs")
+        {
+            std::string which = next();
+            g_options.gs = which == "software" ? 0 : 1;
+        }
+        else if (a == "--scale")
+        {
+            g_options.gsScale = atoi(next().c_str());
+        }
+        else if (a == "--texture-upscale")
+        {
+            g_options.textureUpscale = atoi(next().c_str());
         }
         else if (a == "--fps")
         {

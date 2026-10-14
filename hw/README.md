@@ -9,6 +9,9 @@ These files come from the Crash Twinsanity native port (`src/platform/native/gra
 here unchanged except for:
 
 - `common.h` is this repository's own (the integer and float type names)
+- `hardware.h` and `native.h` are this repository's own, in place of the port's: the set of hardware the OpenGL renderer finds
+  the GS through (`NativeGraphics::GetHardware`) and the settings folder its replacement textures are under
+  (`Native::SettingsFolder`), both answered by the runtime (`runtime/src/display.cpp`)
 - the port's DMA chain runner (`ee/dma.*`) and its 64 bit host address slots (`ee/address.*`) are left out: a recompiled game
   has real PS2 addresses, and the runtime's DMA controller (`runtime/src/dmac.cpp`) runs the channels
 - `gs/gs.h` and `gs/gs.cpp`: `Gs::eventHook`, told of SIGNAL, FINISH and LABEL writes (the runtime's CSR and the GS interrupt)
@@ -20,7 +23,14 @@ here unchanged except for:
   tables are empty, and the translation follows the `vu.cpp` change below
 - `ee/vu.cpp`: LQI, LQD, SQI and SQD's increments and decrements keep the register's old value for the branch read rule, as
   the integer ALU's writes do (Wrath of Cortex's model program loops forever otherwise)
+- `gs/gs.h` and `gs/gs.cpp`: `Gs::steadyFields`, field rendering's odd fields drawn without their half line (XYOFFSET's OFY
+  half a line past a whole one taken as the whole one while SMODE2 is interlaced and in field mode): shown one field after
+  another on a computer's screen, the half line made the picture shake
 
+- `hw/hwgs.cpp`: the primitives of a batch that read the target they draw into read one copy of it made when the batch began
+  (`selfCopyFor_`, as PCSX2's hardware renderers do), instead of a copy of the whole target and two render passes for each
+  primitive; WoC's Warp Room has about 300 such primitives a frame and went from 10-20 frames a second at 3x to 60.
+  `TWIN_HW_EXACT_FEEDBACK=1` copies for each primitive again
 - `gs/workers.cpp`: the workers ask macOS for the performance cores (QoS user interactive): rows are shared out evenly, so
   a worker on an efficiency core held every primitive up
 
