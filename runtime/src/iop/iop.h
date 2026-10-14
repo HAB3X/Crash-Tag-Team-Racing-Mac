@@ -13,9 +13,6 @@ constexpr u32 IopServerBase = 0x00002000;
 // here, so a game finds at least the room it would on the console (CTTR asks for 264 KB after binding 14 servers)
 constexpr u32 IopHeapBase = 0x00010000;
 
-u32 IopAlloc(u32 size);
-// An allocation given back: false if nothing was allocated there
-bool IopFree(u32 at);
 void IopReset();
 // The IOP replacement image the reset loads (its name gives the modules' version)
 void IopSetImage(const std::string& path);

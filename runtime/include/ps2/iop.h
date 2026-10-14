@@ -70,8 +70,11 @@ void IopSendCommand(u32 cid, std::vector<u8> packet, u32 eeAddress = 0, const vo
 using IopModuleStart = std::function<void(const std::vector<std::string>& args)>;
 void IopRegisterModule(const char* name, IopModuleStart start);
 
-// The IOP's memory (2 MB) at an address
+// The IOP's memory (2 MB) at an address, and its heap (a module's AllocSysMemory and FreeSysMemory; the iop heap server's):
+// an allocation's address, and false from a free of something not allocated
 u8* IopMemory(u32 address);
+u32 IopAlloc(u32 size);
+bool IopFree(u32 at);
 
 // A semaphore signalled from the IOP's side (a module's completion), and the EE's memory
 void KernelSignalSema(int id);
