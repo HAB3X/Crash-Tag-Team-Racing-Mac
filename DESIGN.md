@@ -103,7 +103,10 @@ frames are named by guest address). Kernel memory below 0x00080000 is ordinary R
 - DMAC: all ten channels, normal, chain (CNT, NEXT, REF, REFS, REFE, CALL, RET, END, the two-entry address stack, TTE, the
   tag IRQ with TIE) and interleave (SPR) modes; D_CTRL, D_STAT (clear/toggle semantics), D_PCR, D_SQWC. A transfer runs to its
   end when CHCR.STR is written, then the channel's interrupt is raised. VIF0/VIF1/GIF go to the hardware layer; the SIF
-  channels belong to the kernel and the IOP (below). MFIFO and the VIF1 read-back (GS to memory) aren't done.
+  channels belong to the kernel and the IOP (below). The MFIFO (D_CTRL's MFD, D_RBOR, D_RBSR): fromSPR writes into the ring,
+  VIF1 or GIF started in chain mode drains it (tags and their data read in the ring, wrapping; REF's data outside it) as far as
+  fromSPR has filled it, then stays busy with D_STAT's MEIS set until fromSPR adds more (CTTR's renderer). The VIF1 read-back
+  (GS to memory) isn't done.
 - INTC: I_STAT, I_MASK; causes raised by the GS (SIGNAL, FINISH, VSINT), the vblank timer and the DMAC.
 - GS privileged registers: PMODE, SMODE1/2, DISPFB, DISPLAY, BGCOLOR, CSR (FIELD toggling per vblank, VSINT, FINISH, SIGNAL),
   IMR, SIGLBLID; drawing goes through the GIF to the hardware layer's GS.
@@ -270,7 +273,7 @@ second; `--log` turns on the channels' logs; `--audio-dump FILE.wav` keeps the s
 ### Not done yet
 
 The SPU2's DMA timing and AutoDMA input from the IOP's side (no driver uses them yet), libsd's reverb presets, rumble, the
-memory card's newer protocol (libmc 2.6 on), movies (IPU), MFIFO, the VU flags in macro mode, the FPU's exact rounding.
+memory card's newer protocol (libmc 2.6 on), movies (IPU), the VU flags in macro mode, the FPU's exact rounding.
 
 ## Repositories and licences
 

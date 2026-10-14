@@ -1,6 +1,8 @@
 // The DMA controller: ten channels whose transfers run to their end when they're started (the game waits for each before it
 // reuses what it reads), in normal, source chain (tags CNT, NEXT, REF, REFS, REFE, CALL, RET, END with the two level call
-// stack, TTE for the VIFs) and interleave mode; the end raises the channel's interrupt.
+// stack, TTE for the VIFs) and interleave mode; the end raises the channel's interrupt. The MFIFO: with D_CTRL's MFD set,
+// fromSPR writes into a ring in memory (D_RBOR, D_RBSR) and VIF1 or GIF, started in chain mode, drains it as far as fromSPR has
+// filled it, then waits (still busy) for more.
 #include "runtime.h"
 
 #include "../../hw/ee/gif.h"
@@ -121,6 +123,20 @@ struct VifTracer
 };
 VifTracer g_vifTracer;
 
+// The channel D_CTRL's MFD makes the MFIFO's drain (VIF1 or GIF), or -1 with no MFIFO
+int MfifoDrain()
+{
+    switch ((g_ctrl >> 2) & 3)
+    {
+    case 2: return 1;
+    case 3: return 2;
+    default: return -1;
+    }
+}
+
+// An address in the MFIFO's ring: the ring's base and the address's offset within it
+u32 InRing(u32 a) { return g_rbor + (a & g_rbsr); }
+
 // Data sent from memory to a channel's device
 void Send(int ch, const u8* data, u32 qwc, bool isTag)
 {
@@ -157,6 +173,44 @@ void Send(int ch, const u8* data, u32 qwc, bool isTag)
     }
 }
 
+bool RunChain(int ch, Channel& c);
+void Finish(int ch);
+
+// Quadwords sent from the MFIFO's ring, from where the address falls in it, wrapping at its end
+void SendFromRing(int ch, u32 a, u32 qwc)
+{
+    while (qwc > 0)
+    {
+        a = InRing(a);
+        u32 n = std::min(qwc, (g_rbor + g_rbsr + 16 - a) / 16);
+        Send(ch, DmaHost(a), n, false);
+        a += n * 16;
+        qwc -= n;
+    }
+}
+
+// fromSPR into the MFIFO's ring (MADR taken within it, wrapping at its end), then the drain goes on if it's waiting
+void FillMfifo(Channel& c)
+{
+    u32 qwc = c.qwc;
+    while (qwc > 0)
+    {
+        u32 a = InRing(c.madr);
+        u32 n = std::min(qwc, (g_rbor + g_rbsr + 16 - a) / 16);
+        std::memcpy(DmaHost(a), DmaHost(0x80000000u | c.sadr), n * 16);
+        c.madr = InRing(a + n * 16);
+        c.sadr += n * 16;
+        qwc -= n;
+    }
+    c.qwc = 0;
+    int drain = MfifoDrain();
+    Channel& d = g_ch[drain];
+    if ((d.chcr & 0x100) && ((d.chcr >> 2) & 3) == 1 && RunChain(drain, d))
+    {
+        Finish(drain);
+    }
+}
+
 void RunNormal(int ch, Channel& c)
 {
     if (ch == 9)
@@ -166,6 +220,11 @@ void RunNormal(int ch, Channel& c)
         c.madr += c.qwc * 16;
         c.sadr += c.qwc * 16;
         c.qwc = 0;
+        return;
+    }
+    if (ch == 8 && MfifoDrain() >= 0)
+    {
+        FillMfifo(c);
         return;
     }
     if (ch == 8)
@@ -203,13 +262,29 @@ void RunInterleave(int ch, Channel& c)
     }
 }
 
-void RunChain(int ch, Channel& c)
+// A source chain from TADR to its end. The MFIFO's drain reads its tags and their data from the ring (REF, REFS and REFE's
+// data are outside it) and stops where fromSPR has filled it up to: false then, the channel waiting for more
+bool RunChain(int ch, Channel& c)
 {
     bool tte = (c.chcr & 0x40) != 0;
     bool tie = (c.chcr & 0x80) != 0;
+    bool ring = ch == MfifoDrain();
     u32 asp = (c.chcr >> 4) & 3;
+    bool ended = true;
     for (int guard = 0; guard < 1000000; guard++)
     {
+        if (ring)
+        {
+            c.tadr = InRing(c.tadr);
+            if (c.tadr == InRing(g_ch[8].madr))
+            {
+                // The ring is empty: D_STAT's MEIS, and the drain waits
+                PS2_LOG(LogDma, "  MFIFO empty at %08x after %d tags", c.tadr, guard);
+                RaiseDmac(14);
+                ended = false;
+                break;
+            }
+        }
         u8* tagp = DmaHost(c.tadr);
         u64 tag;
         std::memcpy(&tag, tagp, 8);
@@ -292,6 +367,10 @@ void RunChain(int ch, Channel& c)
             std::memcpy(DmaHost(0x80000000u | c.sadr), DmaHost(dataAt), qwc * 16);
             c.sadr += qwc * 16;
         }
+        else if (ring && id != 0 && id != 3 && id != 4)
+        {
+            SendFromRing(ch, dataAt, qwc);
+        }
         else
         {
             Send(ch, DmaHost(dataAt), qwc, false);
@@ -306,6 +385,16 @@ void RunChain(int ch, Channel& c)
     }
     c.chcr = (c.chcr & ~0x30u) | (asp << 4);
     c.qwc = 0;
+    return ended;
+}
+
+// A transfer's end: the channel idle, its GS data handed to the render thread now (the game may wait for what it draws), its
+// interrupt
+void Finish(int ch)
+{
+    g_ch[ch].chcr &= ~0x100u;
+    RenderFlush();
+    RaiseDmac(static_cast<u32>(ch));
 }
 
 void Start(int ch)
@@ -353,19 +442,17 @@ void Start(int ch)
         {
             Log("fromSPR in chain mode not done");
         }
-        else
+        else if (!RunChain(ch, c))
         {
-            RunChain(ch, c);
+            // The MFIFO's drain waits for fromSPR to fill the ring, still busy
+            return;
         }
     }
     else
     {
         RunInterleave(ch, c);
     }
-    c.chcr &= ~0x100u;
-    // The transfer's GS data handed to the render thread now (the game may wait for what it draws)
-    RenderFlush();
-    RaiseDmac(static_cast<u32>(ch));
+    Finish(ch);
 }
 }
 
@@ -413,6 +500,7 @@ void DmacWrite(u32 a, u32 v)
         switch (a)
         {
         case 0x1000E000:
+            PS2_LOG(LogDma, "D_CTRL = %08x", v);
             g_ctrl = v;
             return;
         case 0x1000E010:
@@ -427,9 +515,11 @@ void DmacWrite(u32 a, u32 v)
             g_sqwc = v;
             return;
         case 0x1000E040:
+            PS2_LOG(LogDma, "D_RBSR = %08x", v);
             g_rbsr = v;
             return;
         case 0x1000E050:
+            PS2_LOG(LogDma, "D_RBOR = %08x", v);
             g_rbor = v;
             return;
         case 0x1000E060:
