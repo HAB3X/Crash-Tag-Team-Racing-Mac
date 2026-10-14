@@ -21,7 +21,7 @@ void Usage(const char* program)
             "usage: %s --disc IMAGE [--headless] [--snapshots DIR] [--snapshot-every S] [--snapshot-at S,S,...]\n"
             "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq]\n"
             "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--press S:BUTTON[+BUTTON][:HOLD],...]\n"
-            "          [--type S:TEXT]\n"
+            "          [--type S:TEXT] [--click S:X,Y]\n"
             "          [--fps]\n",
             program);
 }
@@ -192,6 +192,16 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
                     break;
                 }
                 start = comma + 1;
+            }
+        }
+        else if (a == "--click")
+        {
+            // 41:0.5,0.83 (a click at game time 41 s, the middle of the picture across, 83% down)
+            std::string item = next();
+            Options::Click click = {};
+            if (sscanf(item.c_str(), "%lf:%f,%f", &click.at, &click.x, &click.y) == 3)
+            {
+                g_options.clicks.push_back(click);
             }
         }
         else if (a == "--type")

@@ -366,6 +366,16 @@ void InputUpdate(double t, SDL_Window* window)
     {
         pressed |= g_synthButtons;
     }
+    static size_t clickNext = 0;
+    while (clickNext < g_options.clicks.size() && t >= g_options.clicks[clickNext].at)
+    {
+        const Options::Click& click = g_options.clicks[clickNext++];
+        std::lock_guard<std::mutex> lock(g_typedLock);
+        g_mouseX = click.x;
+        g_mouseY = click.y;
+        g_mouseMoved = true;
+        g_clicks.emplace_back(click.x, click.y);
+    }
     static size_t typedNext = 0;
     while (typedNext < g_options.typed.size() && t >= g_options.typed[typedNext].first)
     {

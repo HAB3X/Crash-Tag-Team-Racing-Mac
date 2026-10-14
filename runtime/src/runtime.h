@@ -173,6 +173,14 @@ struct Options
     std::vector<Press> presses;
     // Text typed at given times (seconds of game time), as the keyboard types it while the game takes text
     std::vector<std::pair<double, std::string>> typed;
+    // Mouse clicks at given times (seconds of game time), at places in the picture (0-1 across and down)
+    struct Click
+    {
+        double at;
+        float x;
+        float y;
+    };
+    std::vector<Click> clicks;
 };
 extern Options g_options;
 
