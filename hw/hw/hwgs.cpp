@@ -3816,7 +3816,7 @@ void HwGs::EnsureValid(Target* target, const Gs::PageSet& pages)
             }
         }
 
-        missing |= wanted & ~newestMask_ & ~memStale_;
+        missing |= wanted & ~newestMask_ & (~memStale_ | mergePages_);
     }
 
     // From memory's copy (other targets' newer pages written into it first), on the GPU
