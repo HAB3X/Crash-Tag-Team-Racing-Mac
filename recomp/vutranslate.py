@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """VU1's programs translated to C++ ahead of time, from a game's executable.
 
-    vutranslate.py ELF OUTPUT.cpp      (OUTPUT.cpp: the tables; OUTPUT_0.cpp to OUTPUT_7.cpp: the programs' functions)
-    vutranslate.py ELF --disassemble   (the programs, as the translator reads them)
+    vutranslate.py ELF OUTPUT.cpp [--config CONFIG.toml]     (OUTPUT.cpp: the tables; OUTPUT_0.cpp to OUTPUT_7.cpp: the
+                                                              programs' functions)
+    vutranslate.py ELF --disassemble [--config CONFIG.toml]  (the programs, as the translator reads them)
 
 The programs are what the executable's .vutext section uploads (the DVP toolchain's overlays: each a DMA packet of VIF MPG
-commands, uploaded whole by the game): each packet's instructions at consecutive micro memory addresses make one program. The
+commands, uploaded whole by the game): each packet's instructions at consecutive micro memory addresses make one program. A
+game that keeps its programs as bare code and uploads them with its own DMA chains (Crash Tag Team Racing) names them in its
+config instead: [vu1] programs = [[start, end, micro address], ...], EE addresses of each program's code. The
 dispatcher (hw/ee/vu1translate.cpp) finds a program wherever micro memory holds its code, so where it was uploaded doesn't
 matter: its branches are relative, the addresses it computes (BAL's and JALR's links) are made from the base it runs at.
 
@@ -75,8 +78,25 @@ def vif_mpgs(words):
     return mpgs
 
 
-def read_programs(elf_path):
-    """Each .vutext packet's instructions at consecutive addresses: (micro address, [instructions]), duplicates once."""
+def read_raw_programs(elf_path, config_path):
+    """The config's bare programs: (micro address, [instructions]) from the executable's code at the EE addresses named."""
+    if config_path is None:
+        return []
+    import tomllib
+    with open(config_path, 'rb') as f:
+        ranges = tomllib.load(f).get('vu1', {}).get('programs', [])
+    base, image = Elf(elf_path).image()
+    programs = []
+    for start, end, micro in ranges:
+        start, end, micro = (int(x, 0) if isinstance(x, str) else x for x in (start, end, micro))
+        words = struct.unpack_from('<%dQ' % ((end - start) // 8), image, start - base)
+        programs.append((micro & CODE_MASK, list(words)))
+    return programs
+
+
+def read_programs(elf_path, config_path=None):
+    """Each .vutext packet's instructions at consecutive addresses: (micro address, [instructions]), duplicates once; then the
+    config's bare programs."""
     elf = Elf(elf_path)
     section = elf.sections.get('.vutext')
     if section is None or section['size'] == 0:
@@ -112,12 +132,12 @@ def read_programs(elf_path):
                 programs.append((run[0], list(code)))
             if a is not None:
                 run = [a]
-    return programs
+    return programs + read_raw_programs(elf_path, config_path)
 
 
 # What the translation handles (anything else: the block stops before it and the interpreter runs it)
 UNSUPPORTED_LOWER = {'unknown', 'esadd', 'ersadd', 'eleng', 'erleng', 'eatanxy', 'eatanxz', 'esum', 'ercpr', 'esqrt',
-                     'ersqrt', 'esin', 'eatan', 'eexp', 'waitp', 'mfp', 'fcset', 'fseq', 'fsor'}
+                     'ersqrt', 'esin', 'eatan', 'eexp', 'waitp', 'mfp', 'fseq', 'fsor'}
 ARITH_UPPERS = {'arith', 'opmula', 'opmsub'}
 
 
@@ -540,7 +560,8 @@ class Sim:
                 out.append('    sticky_bits |= StatusLow(MacOf(%s));' % self.pmac)
             # After FSSET's, the next entry's bits are the first in its sticky bits (vu.cpp: anyEntry)
             self.any_entry = not sets_status
-            flags = (FLAG_CLIP if d.upper == 'clip' else 0) | (FLAG_STATUS if sets_status else 0)
+            flags = ((FLAG_CLIP if d.upper == 'clip' or (lower_fmac and d.lower == 'fcset') else 0) |
+                     (FLAG_STATUS if sets_status else 0))
             entry = Entry(self.cycle,
                           d.upper_write_vf if upper_fmac else 0, d.upper_write_mask if upper_fmac else 0,
                           d.lower_write_vf if lower_fmac else 0, d.lower_write_mask if lower_fmac else 0,
@@ -731,6 +752,11 @@ class Sim:
             self.write_vi(1, '((%s & 0xFFFFFF) | %#x) == 0xFFFFFF ? 1 : 0' % (self.vis_clip, lw & 0xFFFFFF), out)
         elif op == 'fcget':
             self.write_vi(it, '%s & 0xFFF' % self.vis_clip, out)
+        elif op == 'fcset':
+            # The clip flag set, through the FMAC pipeline as CLIP's result goes (the interpreter's pending clip)
+            c = t.new('c')
+            out.append('    const u32 %s = %#xu;' % (c, lw & 0xFFFFFF))
+            self.pclip = c
         elif op == 'fsand':
             imm12 = ((lw >> 21) & 1) << 11 | (lw & 0x7FF)
             if imm12 & 0x3C0:
@@ -838,8 +864,8 @@ class Sim:
         out.append('    vu.Kick(%s & 0x3FF);' % vi(is_))
 
 
-def translate_all(root):
-    programs = read_programs(root)
+def translate_all(root, config_path=None):
+    programs = read_programs(root, config_path)
     translators = []
     for index, (start, words) in enumerate(programs):
         translators.append(Translator(index, start, words))
@@ -1103,9 +1129,9 @@ def write_if_changed(path, text):
         path.write_text(text)
 
 
-def generate(root, output):
+def generate(root, output, config_path=None):
     """OUTPUT (the tables) and OUTPUT's name with _0 to _7 (the programs' functions, shared out by size)."""
-    translators = translate_all(root)
+    translators = translate_all(root, config_path)
     for tr in translators:
         for o, sig in tr.variants:
             signature_id(sig)
@@ -1172,16 +1198,21 @@ def generate(root, output):
 
 def main():
     args = sys.argv[1:]
+    config_path = None
+    if '--config' in args:
+        at = args.index('--config')
+        config_path = args[at + 1]
+        del args[at:at + 2]
     if len(args) != 2:
         raise SystemExit(__doc__)
     elf, output = args
     if output == '--disassemble':
-        for index, (start, words) in enumerate(read_programs(elf)):
+        for index, (start, words) in enumerate(read_programs(elf, config_path)):
             print('program %d at micro address %#x (%d instructions)' % (index, start, len(words)))
             for o, w in enumerate(words):
                 print('  %04x  %s' % (o, decode(o, w).text()))
         return
-    generate(elf, output)
+    generate(elf, output, config_path)
 
 
 if __name__ == '__main__':

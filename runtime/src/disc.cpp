@@ -17,6 +17,7 @@ u32 g_sectorSize = 2048;
 u32 g_dataOffset = 0;
 u32 g_rootLsn = 0;
 u32 g_rootSize = 0;
+bool g_dvd = false;
 
 struct Entry
 {
@@ -126,9 +127,22 @@ bool DiscOpen(const std::string& path)
     }
     std::memcpy(&g_rootLsn, pvd + 156 + 2, 4);
     std::memcpy(&g_rootSize, pvd + 156 + 10, 4);
-    Log("disc %s (%u byte sectors)", bin.c_str(), g_sectorSize);
+    // A PlayStation 2 DVD is an ISO 9660 and UDF bridge: UDF's volume recognition sequence (BEA01, NSR02 or NSR03, TEA01)
+    // follows the ISO descriptors; a PlayStation 2 CD has none
+    for (u32 lsn = 17; lsn < 32 && !g_dvd; lsn++)
+    {
+        u8 descriptor[2048];
+        if (!ReadRaw(lsn, 1, descriptor))
+        {
+            break;
+        }
+        g_dvd = std::memcmp(descriptor + 1, "BEA01", 5) == 0;
+    }
+    Log("disc %s (%u byte sectors, a %s)", bin.c_str(), g_sectorSize, g_dvd ? "DVD" : "CD");
     return true;
 }
+
+bool DiscIsDvd() { return g_dvd; }
 
 bool DiscFind(const std::string& path, u32& lsn, u32& size)
 {

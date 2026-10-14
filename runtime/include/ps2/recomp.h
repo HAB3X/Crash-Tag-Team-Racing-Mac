@@ -3,6 +3,7 @@
 #pragma once
 
 #include <math.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -234,7 +235,8 @@ static inline void ps2_sdr(Ps2Cpu* c, int rt, u32 a)
 void ps2_call(Ps2Cpu* c, u32 address);
 void ps2_syscall(Ps2Cpu* c, u32 pc);
 void ps2_break(Ps2Cpu* c, u32 pc);
-void ps2_eret(Ps2Cpu* c, u32 pc);
+// ERET: leaves the exception level (ERL first, else EXL) and gives the address to go on at (ErrorEPC or EPC)
+u32 ps2_eret(Ps2Cpu* c, u32 pc);
 u32 ps2_mfc0(Ps2Cpu* c, int reg);
 void ps2_mtc0(Ps2Cpu* c, int reg, u32 value);
 void ps2_ei(Ps2Cpu* c);
@@ -242,6 +244,16 @@ void ps2_di(Ps2Cpu* c);
 int ps2_cpcond0(Ps2Cpu* c);
 u32 ps2_cfc1(Ps2Cpu* c, int reg);
 void ps2_ctc1(Ps2Cpu* c, int reg, u32 value);
+
+// A game's setjmp and longjmp (the config's [functions] setjmp and longjmp): a call to setjmp keeps the host's place in the
+// caller's frame (ps2_setjmp_buffer, by the guest buffer's address) besides the registers the game's setjmp keeps, and longjmp,
+// once the game's code has put the registers back, goes back to that place (ps2_longjmp): the same stack's frames unwound, or
+// another stack's (a game's own threads, switched by longjmp)
+jmp_buf* ps2_setjmp_buffer(Ps2Cpu* c, u32 buffer);
+__attribute__((noreturn)) void ps2_longjmp(Ps2Cpu* c, u32 buffer);
+// A game's switch to a new stack of its own (its own threads, started by setting SP and jumping): the code at pc runs with SP
+// at sp on a host stack of its own (one for each guest stack, kept), and where it returns to after (RA), as JR RA would
+__attribute__((noreturn)) void ps2_switch_stack(Ps2Cpu* c, u32 sp, u32 pc);
 
 // Interrupts are delivered at backward branches and in the runtime's calls
 extern volatile int ps2_irq_pending;

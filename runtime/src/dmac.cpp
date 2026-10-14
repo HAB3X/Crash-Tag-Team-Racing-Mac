@@ -1,6 +1,8 @@
 // The DMA controller: ten channels whose transfers run to their end when they're started (the game waits for each before it
 // reuses what it reads), in normal, source chain (tags CNT, NEXT, REF, REFS, REFE, CALL, RET, END with the two level call
-// stack, TTE for the VIFs) and interleave mode; the end raises the channel's interrupt.
+// stack, TTE for the VIFs) and interleave mode; the end raises the channel's interrupt. The MFIFO: with D_CTRL's MFD set,
+// fromSPR writes into a ring in memory (D_RBOR, D_RBSR) and VIF1 or GIF, started in chain mode, drains it as far as fromSPR has
+// filled it, then waits (still busy) for more.
 #include "runtime.h"
 
 #include "../../hw/ee/gif.h"
@@ -18,10 +20,27 @@ struct Channel
     u32 tadr = 0;
     u32 asr[2] = {};
     u32 sadr = 0;
+    // A chain stopped by its VIF's stall: the tag whose data is left (MADR, QWC) ends it
+    bool chainEnds = false;
+    // Started (STR) while D_CTRL's DMAE was off: it begins when DMAE is set; and whether it had begun already (it goes on then)
+    bool deferred = false;
+    bool begun = false;
 };
 
+// What a chain's run came to: its end, the MFIFO's drain waiting for fromSPR, or its VIF stalled at a code's interrupt bit
+enum class Run
+{
+    Ended,
+    Waiting,
+    Stalled,
+};
+
+// The words of a quadword a stalled VIF didn't take: they're in its FIFO, and go first when the stall ends
+std::vector<u32> g_vifHeld[2];
+
 Channel g_ch[10];
-u32 g_ctrl = 0;
+// D_CTRL: DMAE on, as the kernel leaves it (CTTR starts its first transfers before it writes D_CTRL)
+u32 g_ctrl = 1;
 u32 g_pcr = 0;
 u32 g_sqwc = 0;
 u32 g_rbor = 0;
@@ -121,27 +140,48 @@ struct VifTracer
 };
 VifTracer g_vifTracer;
 
-// Data sent from memory to a channel's device
-void Send(int ch, const u8* data, u32 qwc, bool isTag)
+// The channel D_CTRL's MFD makes the MFIFO's drain (VIF1 or GIF), or -1 with no MFIFO
+int MfifoDrain()
+{
+    switch ((g_ctrl >> 2) & 3)
+    {
+    case 2: return 1;
+    case 3: return 2;
+    default: return -1;
+    }
+}
+
+// An address in the MFIFO's ring: the ring's base and the address's offset within it
+u32 InRing(u32 a) { return g_rbor + (a & g_rbsr); }
+
+// Data sent from memory to a channel's device: the quadwords taken, fewer when a VIF stalls at a code's interrupt bit
+u32 Send(int ch, const u8* data, u32 qwc, bool isTag)
 {
     if (qwc == 0)
     {
-        return;
+        return 0;
     }
     Hardware& hw = Hw();
     const u32* words = reinterpret_cast<const u32*>(data);
     switch (ch)
     {
     case 0:
-        hw.vif0->Process(words, qwc * 4);
-        break;
     case 1:
-        if (g_vifTrace > 0)
+    {
+        if (ch == 1 && g_vifTrace > 0)
         {
             g_vifTracer.Words(words, qwc * 4);
         }
-        hw.vif1->Process(words, qwc * 4);
+        Ee::Vif* vif = ch == 0 ? hw.vif0 : hw.vif1;
+        u32 taken = vif->Process(words, qwc * 4);
+        if (taken < qwc * 4)
+        {
+            u32 quadwords = (taken + 3) / 4;
+            g_vifHeld[ch].assign(words + taken, words + quadwords * 4);
+            return quadwords;
+        }
         break;
+    }
     case 2:
         if (!isTag)
         {
@@ -155,9 +195,63 @@ void Send(int ch, const u8* data, u32 qwc, bool isTag)
         }
         break;
     }
+    return qwc;
 }
 
-void RunNormal(int ch, Channel& c)
+Run RunChain(int ch, Channel& c);
+void Finish(int ch);
+void Continue(int ch);
+
+// Quadwords sent from the MFIFO's ring, from where the address falls in it, wrapping at its end: the quadwords taken
+u32 SendFromRing(int ch, u32 a, u32 qwc)
+{
+    u32 sent = 0;
+    while (sent < qwc)
+    {
+        a = InRing(a);
+        u32 n = std::min(qwc - sent, (g_rbor + g_rbsr + 16 - a) / 16);
+        u32 taken = Send(ch, DmaHost(a), n, false);
+        sent += taken;
+        a += taken * 16;
+        if (taken < n)
+        {
+            break;
+        }
+    }
+    return sent;
+}
+
+// A channel's data at an address (in the MFIFO's ring, wrapping, when it's the drain's and the address is there)
+u32 SendAt(int ch, u32 address, u32 qwc)
+{
+    bool ring = ch == MfifoDrain() && (address & ~g_rbsr) == g_rbor;
+    return ring ? SendFromRing(ch, address, qwc) : Send(ch, DmaHost(address), qwc, false);
+}
+
+// fromSPR into the MFIFO's ring (MADR taken within it, wrapping at its end), then the drain goes on if it's waiting
+void FillMfifo(Channel& c)
+{
+    u32 qwc = c.qwc;
+    while (qwc > 0)
+    {
+        u32 a = InRing(c.madr);
+        u32 n = std::min(qwc, (g_rbor + g_rbsr + 16 - a) / 16);
+        std::memcpy(DmaHost(a), DmaHost(0x80000000u | c.sadr), n * 16);
+        c.madr = InRing(a + n * 16);
+        c.sadr += n * 16;
+        qwc -= n;
+    }
+    c.qwc = 0;
+    int drain = MfifoDrain();
+    Channel& d = g_ch[drain];
+    if ((d.chcr & 0x100) && ((d.chcr >> 2) & 3) == 1)
+    {
+        Continue(drain);
+    }
+}
+
+// MADR's QWC quadwords: false when a VIF stalled before taking them all (MADR and QWC are what's left)
+bool RunNormal(int ch, Channel& c)
 {
     if (ch == 9)
     {
@@ -166,7 +260,12 @@ void RunNormal(int ch, Channel& c)
         c.madr += c.qwc * 16;
         c.sadr += c.qwc * 16;
         c.qwc = 0;
-        return;
+        return true;
+    }
+    if (ch == 8 && MfifoDrain() >= 0)
+    {
+        FillMfifo(c);
+        return true;
     }
     if (ch == 8)
     {
@@ -174,11 +273,12 @@ void RunNormal(int ch, Channel& c)
         c.madr += c.qwc * 16;
         c.sadr += c.qwc * 16;
         c.qwc = 0;
-        return;
+        return true;
     }
-    Send(ch, DmaHost(c.madr), c.qwc, false);
-    c.madr += c.qwc * 16;
-    c.qwc = 0;
+    u32 taken = SendAt(ch, c.madr, c.qwc);
+    c.madr += taken * 16;
+    c.qwc -= taken;
+    return c.qwc == 0;
 }
 
 void RunInterleave(int ch, Channel& c)
@@ -203,13 +303,30 @@ void RunInterleave(int ch, Channel& c)
     }
 }
 
-void RunChain(int ch, Channel& c)
+// A source chain from TADR to its end. The MFIFO's drain reads its tags from the ring and stops where fromSPR has filled it
+// up to (Waiting); data at an address in the ring is read there, wrapping. A VIF stalled by a code's interrupt bit stops it
+// (Stalled), with the tag's data left in MADR and QWC
+Run RunChain(int ch, Channel& c)
 {
     bool tte = (c.chcr & 0x40) != 0;
     bool tie = (c.chcr & 0x80) != 0;
+    bool ring = ch == MfifoDrain();
     u32 asp = (c.chcr >> 4) & 3;
+    Run result = Run::Ended;
     for (int guard = 0; guard < 1000000; guard++)
     {
+        if (ring)
+        {
+            c.tadr = InRing(c.tadr);
+            if (c.tadr == InRing(g_ch[8].madr))
+            {
+                // The ring is empty: D_STAT's MEIS, and the drain waits
+                PS2_LOG(LogDma, "  MFIFO empty at %08x after %d tags", c.tadr, guard);
+                RaiseDmac(14);
+                result = Run::Waiting;
+                break;
+            }
+        }
         u8* tagp = DmaHost(c.tadr);
         u64 tag;
         std::memcpy(&tag, tagp, 8);
@@ -225,17 +342,6 @@ void RunChain(int ch, Channel& c)
         if (guard == 999999)
         {
             Log("DMA %s: a chain of a million tags (at %08x): stopped", ChannelName(ch), c.tadr);
-        }
-        if (tte && (ch == 0 || ch == 1))
-        {
-            // The tag's upper two words to the VIF
-            Hardware& hw = Hw();
-            const u32* w = reinterpret_cast<const u32*>(tagp) + 2;
-            if (ch == 1 && g_vifTrace > 0)
-            {
-                g_vifTracer.Words(w, 2);
-            }
-            (ch == 0 ? hw.vif0 : hw.vif1)->Process(w, 2);
         }
         bool end = false;
         u32 dataAt = 0;
@@ -287,25 +393,84 @@ void RunChain(int ch, Channel& c)
             end = true;
             break;
         }
+        c.tadr = next;
+        c.madr = dataAt;
+        c.qwc = qwc;
+        c.chainEnds = end || (irq && tie);
+        if (tte && (ch == 0 || ch == 1))
+        {
+            // The tag's upper two words to the VIF
+            const u32* w = reinterpret_cast<const u32*>(tagp) + 2;
+            if (ch == 1 && g_vifTrace > 0)
+            {
+                g_vifTracer.Words(w, 2);
+            }
+            Ee::Vif* vif = ch == 0 ? Hw().vif0 : Hw().vif1;
+            u32 taken = vif->Process(w, 2);
+            if (vif->stalled())
+            {
+                g_vifHeld[ch].assign(w + taken, w + 2);
+                result = Run::Stalled;
+                break;
+            }
+        }
         if (ch == 9)
         {
             std::memcpy(DmaHost(0x80000000u | c.sadr), DmaHost(dataAt), qwc * 16);
             c.sadr += qwc * 16;
+            c.madr += qwc * 16;
+            c.qwc = 0;
         }
-        else
+        else if (!RunNormal(ch, c))
         {
-            Send(ch, DmaHost(dataAt), qwc, false);
+            result = Run::Stalled;
+            break;
         }
-        c.madr = dataAt + qwc * 16;
-        c.tadr = next;
-        if (end || (irq && tie))
+        if (c.chainEnds)
         {
             PS2_LOG(LogDma, "  chain ended after %d tags", guard + 1);
             break;
         }
     }
     c.chcr = (c.chcr & ~0x30u) | (asp << 4);
-    c.qwc = 0;
+    return result;
+}
+
+// A transfer's end: the channel idle, its GS data handed to the render thread now (the game may wait for what it draws), its
+// interrupt
+void Finish(int ch)
+{
+    g_ch[ch].chcr &= ~0x100u;
+    g_ch[ch].chainEnds = false;
+    RenderFlush();
+    RaiseDmac(static_cast<u32>(ch));
+}
+
+// A started transfer on from where it is: the data left of its tag (or of a normal transfer), then the rest of its chain; it
+// ends unless its VIF stalls or the MFIFO's drain waits
+void Continue(int ch)
+{
+    Channel& c = g_ch[ch];
+    if (!(g_ctrl & 1))
+    {
+        // The DMAC is off: the transfer stands still until DMAE is set again
+        c.deferred = true;
+        return;
+    }
+    if (ch <= 1 && (ch == 0 ? Hw().vif0 : Hw().vif1)->stalled())
+    {
+        return;
+    }
+    u32 mode = (c.chcr >> 2) & 3;
+    if (c.qwc > 0 && !RunNormal(ch, c))
+    {
+        return;
+    }
+    if (mode == 1 && !c.chainEnds && RunChain(ch, c) != Run::Ended)
+    {
+        return;
+    }
+    Finish(ch);
 }
 
 void Start(int ch)
@@ -313,11 +478,18 @@ void Start(int ch)
     Channel& c = g_ch[ch];
     u32 mode = (c.chcr >> 2) & 3;
     PS2_LOG(LogDma, "DMA %s start chcr %08x madr %08x qwc %x tadr %08x", ChannelName(ch), c.chcr, c.madr, c.qwc, c.tadr);
+    c.chainEnds = false;
+    c.begun = false;
     if (!(g_ctrl & 1))
     {
-        // The DMAC is off: the transfer waits (it never starts here)
-        PS2_LOG(LogDma, "DMA %s started with the DMAC off", ChannelName(ch));
+        // The DMAC is off (D_CTRL's DMAE): the transfer begins when it's set (CTTR re-arms its MFIFO's drain this way: VIF1
+        // started, then its TADR and fromSPR's MADR put back at the ring's start, then DMAE; begun at once, the drain would
+        // run the frame it had already drained again)
+        PS2_LOG(LogDma, "DMA %s started with the DMAC off: it waits for DMAE", ChannelName(ch));
+        c.deferred = true;
+        return;
     }
+    c.begun = true;
     if (ch == 5 || ch == 6 || ch == 7)
     {
         // The SIF's channels are the kernel's and the IOP's (sif.cpp); started directly they finish at once
@@ -333,43 +505,59 @@ void Start(int ch)
     }
     else if (mode == 0)
     {
-        if (c.qwc > 0)
+        // QWC 0 in normal mode: nothing to move
+        if (c.qwc > 0 && !RunNormal(ch, c))
         {
-            RunNormal(ch, c);
-        }
-        else if (ch <= 2 || ch == 9)
-        {
-            // QWC 0 in normal mode: nothing to move
+            return;
         }
     }
     else if (mode == 1)
     {
-        if (c.qwc > 0)
-        {
-            // A chain started with data left over first sends it (MADR, QWC) then goes on at TADR
-            RunNormal(ch, c);
-        }
         if (ch == 8)
         {
             Log("fromSPR in chain mode not done");
         }
         else
         {
-            RunChain(ch, c);
+            // A chain started with data left over first sends it (MADR, QWC) then goes on at TADR
+            Continue(ch);
+            return;
         }
     }
     else
     {
         RunInterleave(ch, c);
     }
-    c.chcr &= ~0x100u;
-    // The transfer's GS data handed to the render thread now (the game may wait for what it draws)
-    RenderFlush();
-    RaiseDmac(static_cast<u32>(ch));
+    Finish(ch);
 }
 }
 
 void DmacInit() {}
+
+void DmacVifUnstall(int vif)
+{
+    Ee::Vif* v = vif == 0 ? Hw().vif0 : Hw().vif1;
+    if (!v->stalled())
+    {
+        return;
+    }
+    v->CancelStall();
+    // The words left in its FIFO first, then the transfer it stopped
+    std::vector<u32>& held = g_vifHeld[vif];
+    if (!held.empty())
+    {
+        u32 taken = v->Process(held.data(), static_cast<u32>(held.size()));
+        held.erase(held.begin(), held.begin() + taken);
+        if (v->stalled())
+        {
+            return;
+        }
+    }
+    if (g_ch[vif].chcr & 0x100)
+    {
+        Continue(vif);
+    }
+}
 
 u32 DmacRead(u32 a)
 {
@@ -413,8 +601,33 @@ void DmacWrite(u32 a, u32 v)
         switch (a)
         {
         case 0x1000E000:
+        {
+            PS2_LOG(LogDma, "D_CTRL = %08x", v);
+            bool enabled = !(g_ctrl & 1) && (v & 1);
             g_ctrl = v;
+            if (enabled)
+            {
+                // DMAE set: the transfers that waited for it begin, or go on, in the channels' order
+                for (int ch = 0; ch < 10; ch++)
+                {
+                    Channel& c = g_ch[ch];
+                    if (c.deferred && (c.chcr & 0x100))
+                    {
+                        c.deferred = false;
+                        if (c.begun)
+                        {
+                            Continue(ch);
+                        }
+                        else
+                        {
+                            Start(ch);
+                        }
+                    }
+                    c.deferred = false;
+                }
+            }
             return;
+        }
         case 0x1000E010:
             // The status bits are cleared by ones, the masks toggled by ones
             g_dmacStat &= ~(v & 0xFFFF);
@@ -427,9 +640,11 @@ void DmacWrite(u32 a, u32 v)
             g_sqwc = v;
             return;
         case 0x1000E040:
+            PS2_LOG(LogDma, "D_RBSR = %08x", v);
             g_rbsr = v;
             return;
         case 0x1000E050:
+            PS2_LOG(LogDma, "D_RBOR = %08x", v);
             g_rbor = v;
             return;
         case 0x1000E060:

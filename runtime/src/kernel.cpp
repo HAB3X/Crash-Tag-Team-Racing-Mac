@@ -120,6 +120,9 @@ int g_nextHandler = 1;
 std::vector<Alarm> g_alarms;
 int g_nextAlarm = 1;
 bool g_interruptsEnabled = true;
+// COP0 Status's EXL and ERL (bits 1 and 2), as the game's own kernel-mode code sets them (CTTR's libkernel writes timer 2 with
+// ERL on, then ERETs back): interrupts wait while either is on, as on the console
+u32 g_exceptionLevel = 0;
 int g_inInterrupt = 0;
 u32 g_heapEnd = 0;
 u32 g_mainStack = 0;
@@ -396,7 +399,7 @@ void ServiceLocked(std::unique_lock<std::mutex>& lock)
         lock.lock();
         g_intcStat |= 1u << 3;
     }
-    if (!g_interruptsEnabled || g_inInterrupt > 0)
+    if (!g_interruptsEnabled || g_exceptionLevel != 0 || g_inInterrupt > 0)
     {
         UpdatePending();
         return;
@@ -500,8 +503,24 @@ void TimerThread()
     for (;;)
     {
         next += std::chrono::nanoseconds(static_cast<long long>(1e9 / g_vblankRate));
-        // Sleep until the vblank, waking for alarms on the way
-        std::this_thread::sleep_until(next);
+        // Sleep until the vblank, waking for the timers' events on the way (alarms are seen at the vblank)
+        for (;;)
+        {
+            u64 event = IoTimerEvents();
+            auto now = clock::now();
+            if (now >= next)
+            {
+                break;
+            }
+            auto until = next;
+            u64 cycles = BusCycles();
+            if (event != ~0ull)
+            {
+                auto wait = std::chrono::nanoseconds(event > cycles ? static_cast<long long>((event - cycles) / 0.147456) : 0);
+                until = std::min(next, now + std::max(wait, std::chrono::nanoseconds(100000)));
+            }
+            std::this_thread::sleep_until(until);
+        }
         {
             std::unique_lock<std::mutex> lock(g_lock);
             if (g_pauseWanted)
@@ -523,6 +542,7 @@ void TimerThread()
             g_vblankStart = 1;
             UpdatePending();
         }
+        IopUpdate();
         // The blank lasts about 22 lines of 525
         std::this_thread::sleep_for(std::chrono::microseconds(700));
         {
@@ -964,8 +984,10 @@ const char* SyscallName(int n)
     case 0x15: return "DisableIntc";
     case 0x16: return "EnableDmac";
     case 0x17: return "DisableDmac";
-    case 0x18: return "SetAlarm";
-    case 0x19: return "ReleaseAlarm";
+    case 0x18: case 0xFC: return "SetAlarm";
+    case 0x19: case 0xFD: return "ReleaseAlarm";
+    case 0x1E: case 0xFE: return "iSetAlarm";
+    case 0x1F: case 0xFF: return "iReleaseAlarm";
     case 0x20: return "CreateThread";
     case 0x22: return "StartThread";
     case 0x29: return "ChangeThreadPriority";
@@ -1029,7 +1051,7 @@ void KernelOnGameSide(std::function<void()> work)
 
 bool InInterrupt() { return g_inInterrupt > 0; }
 
-bool InterruptsEnabled() { return g_interruptsEnabled; }
+u32 KernelStatus() { return 0x70000C01 | (g_interruptsEnabled ? 0x10000u : 0) | g_exceptionLevel; }
 
 void KernelDumpThreads()
 {
@@ -1149,6 +1171,22 @@ extern "C" void ps2_di(Ps2Cpu* c)
     g_interruptsEnabled = false;
 }
 
+namespace Ps2
+{
+void KernelSetStatus(Ps2Cpu* c, u32 status)
+{
+    g_exceptionLevel = status & 6;
+    if (status & 0x10000)
+    {
+        ps2_ei(c);
+    }
+    else
+    {
+        ps2_di(c);
+    }
+}
+}
+
 extern "C" void ps2_syscall(Ps2Cpu* c, u32 pc)
 {
     s32 number = c->r[3].sw[0];
@@ -1252,6 +1290,8 @@ extern "C" void ps2_syscall(Ps2Cpu* c, u32 pc)
     }
     case 0x18: // SetAlarm(ticks in hsyncs, handler, arg)
     case 0x1E:
+    case 0xFC: // libkernel 2.7 on: its own SetAlarm and iSetAlarm (0xFE), which its kernel patch (0x5B) puts at 0xFC-0xFF
+    case 0xFE:
     {
         Alarm a;
         a.id = g_nextAlarm++;
@@ -1266,6 +1306,8 @@ extern "C" void ps2_syscall(Ps2Cpu* c, u32 pc)
     }
     case 0x19: // ReleaseAlarm
     case 0x1F:
+    case 0xFD: // libkernel 2.7 on: ReleaseAlarm and iReleaseAlarm (0xFF)
+    case 0xFF:
     {
         int id = static_cast<s32>(Arg(c, 0));
         auto it = std::find_if(g_alarms.begin(), g_alarms.end(), [&](const Alarm& a) { return a.id == id; });

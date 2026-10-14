@@ -14,7 +14,19 @@ namespace Ps2
 namespace
 {
 u8* g_iopMem = nullptr;
-std::mutex g_sifLock;
+// A server's receive buffer (the modules' own are smaller; the client data buffer, cbuf, is none, as the modules register)
+constexpr u32 ServerBufferSize = 0x8000;
+// Recursive: a module's command handler, called with it held, may send a command of its own
+std::recursive_mutex g_sifLock;
+// The modules' commands to the EE (IopSendCommand) wait here until the SIF's lock is free: a sender may hold the sound lock,
+// which a server takes under the SIF's
+std::mutex g_outLock;
+std::deque<std::vector<u8>> g_outbox;
+std::map<u32, IopCommandHandler>& CommandHandlers()
+{
+    static std::map<u32, IopCommandHandler> h;
+    return h;
+}
 u32 g_sysregs[8] = {};
 u32 g_msflag = 0;
 u32 g_mscom = 0;
@@ -22,7 +34,10 @@ u32 g_eeRecvBuf = 0;
 u32 g_iopSregs[32] = {};
 std::deque<std::vector<u8>> g_replies;
 bool g_inFlight = false;
-u32 g_heapNext = IopHeapBase;
+// The heap: first fit over the free blocks (start to size), a freed block joined to its free neighbours
+std::mutex g_heapLock;
+std::map<u32, u32> g_heapFree = {{IopHeapBase, IopRamSize - IopHeapBase}};
+std::map<u32, u32> g_heapUsed;
 
 constexpr u32 SIF_CMD_CHANGE_SADDR = 0x80000000;
 constexpr u32 SIF_CMD_SET_SREG = 0x80000001;
@@ -106,7 +121,7 @@ BoundServer& Bind(u32 sid)
     BoundServer s;
     s.sid = sid;
     s.address = IopServerBase + static_cast<u32>(g_bySid.size()) * 0x40;
-    s.buffer = IopAlloc(0x10000);
+    s.buffer = IopAlloc(ServerBufferSize);
     g_bySid[sid] = s;
     g_byAddress[s.address] = s;
     return g_bySid[sid];
@@ -150,7 +165,7 @@ void HandleCommand(const u8* p)
         u32 sid = R32(p, 32);
         BoundServer& s = Bind(sid);
         PS2_LOG(LogSif, "bind %08x (%s)", sid, IopServerName(sid));
-        QueueReply(RendPacket(p, SIF_CMD_RPC_BIND, s.address, s.buffer, s.buffer + 0x8000));
+        QueueReply(RendPacket(p, SIF_CMD_RPC_BIND, s.address, s.buffer, 0));
         DeliverNext();
         break;
     }
@@ -170,6 +185,11 @@ void HandleCommand(const u8* p)
             break;
         }
         const BoundServer& s = it->second;
+        if (sendSize > ServerBufferSize)
+        {
+            Fatal("RPC %08x function %u sent %u bytes, more than its receive buffer's %u (it ran past it)", s.sid, fno,
+                  sendSize, ServerBufferSize);
+        }
         RpcCall call;
         call.sid = s.sid;
         call.fno = fno;
@@ -183,7 +203,7 @@ void HandleCommand(const u8* p)
         {
             std::memcpy(Host(call.receive), call.out.data(), std::min<size_t>(recvSize, call.out.size()));
         }
-        QueueReply(RendPacket(p, SIF_CMD_RPC_CALL, server, s.buffer, s.buffer + 0x8000));
+        QueueReply(RendPacket(p, SIF_CMD_RPC_CALL, server, s.buffer, 0));
         DeliverNext();
         break;
     }
@@ -200,23 +220,140 @@ void HandleCommand(const u8* p)
         break;
     }
     default:
-        Log("SIF command %08x (%u bytes) not done", cid, psize);
+    {
+        auto handler = CommandHandlers().find(cid);
+        if (handler != CommandHandlers().end())
+        {
+            PS2_LOG(LogSif, "EE to IOP: command %08x (%u bytes)", cid, psize);
+            handler->second(p, psize);
+            break;
+        }
+        if (Once("sifcmd " + std::to_string(cid)))
+        {
+            Log("SIF command %08x (%u bytes) not done", cid, psize);
+        }
         break;
+    }
+    }
+}
+
+// The modules' commands waiting in the outbox join the replies (with the SIF's lock held)
+void TakeOutbox()
+{
+    std::lock_guard<std::mutex> lock(g_outLock);
+    while (!g_outbox.empty())
+    {
+        g_replies.push_back(std::move(g_outbox.front()));
+        g_outbox.pop_front();
     }
 }
 }
 
 u8* IopMem() { return g_iopMem; }
 
+u32 IopAllocMode(u32 mode, u32 size, u32 address)
+{
+    std::lock_guard<std::mutex> lock(g_heapLock);
+    u32 need = std::max<u32>((size + 63) & ~63u, 64);
+    // The block: the first that fits (mode 0), the last (1), or the one holding the address (2)
+    auto chosen = g_heapFree.end();
+    for (auto it = g_heapFree.begin(); it != g_heapFree.end(); ++it)
+    {
+        if (mode == 2 ? (it->first <= address && address + need <= it->first + it->second) : it->second >= need)
+        {
+            chosen = it;
+            if (mode != 1)
+            {
+                break;
+            }
+        }
+    }
+    if (chosen == g_heapFree.end())
+    {
+        return 0;
+    }
+    u32 start = chosen->first, length = chosen->second;
+    u32 at = mode == 1 ? start + length - need : mode == 2 ? address : start;
+    g_heapFree.erase(chosen);
+    if (at > start)
+    {
+        g_heapFree[start] = at - start;
+    }
+    if (at + need < start + length)
+    {
+        g_heapFree[at + need] = start + length - at - need;
+    }
+    g_heapUsed[at] = need;
+    return at;
+}
+
+u32 IopFreeTotal(bool largest)
+{
+    std::lock_guard<std::mutex> lock(g_heapLock);
+    u32 total = 0, most = 0;
+    for (const auto& [at, n] : g_heapFree)
+    {
+        total += n;
+        most = std::max(most, n);
+    }
+    return largest ? most : total;
+}
+
+u32 IopBlockOf(u32 address, bool size)
+{
+    std::lock_guard<std::mutex> lock(g_heapLock);
+    for (const auto* blocks : {&g_heapUsed, &g_heapFree})
+    {
+        auto it = blocks->upper_bound(address);
+        if (it != blocks->begin() && address < std::prev(it)->first + std::prev(it)->second)
+        {
+            --it;
+            // A free block's answer has bit 31 set, as sysmem's
+            u32 value = size ? it->second : it->first;
+            return blocks == &g_heapFree ? value | 0x80000000u : value;
+        }
+    }
+    return static_cast<u32>(-1);
+}
+
 u32 IopAlloc(u32 size)
 {
-    u32 at = (g_heapNext + 63) & ~63u;
-    g_heapNext = at + size;
-    if (g_heapNext > IopRamSize)
+    u32 at = IopAllocMode(0, size, 0);
+    if (at == 0)
     {
-        Fatal("IOP memory full");
+        Fatal("IOP memory full: %u bytes asked for, %u free, the largest block %u", size, IopFreeTotal(false),
+              IopFreeTotal(true));
     }
     return at;
+}
+
+bool IopFree(u32 at)
+{
+    std::lock_guard<std::mutex> lock(g_heapLock);
+    auto used = g_heapUsed.find(at);
+    if (used == g_heapUsed.end())
+    {
+        return false;
+    }
+    u32 start = at;
+    u32 size = used->second;
+    g_heapUsed.erase(used);
+    auto next = g_heapFree.find(start + size);
+    if (next != g_heapFree.end())
+    {
+        size += next->second;
+        g_heapFree.erase(next);
+    }
+    auto prev = g_heapFree.lower_bound(start);
+    if (prev != g_heapFree.begin() && (--prev)->first + prev->second == start)
+    {
+        prev->second += size;
+    }
+    else
+    {
+        g_heapFree[start] = size;
+    }
+    return true;
 }
 
 void IopReset()
@@ -232,7 +369,7 @@ void IopInit()
 
 void SifSetDma(u32 src, u32 dest, u32 size, u32 attr)
 {
-    std::lock_guard<std::mutex> lock(g_sifLock);
+    std::lock_guard<std::recursive_mutex> lock(g_sifLock);
     dest &= IopRamSize - 1;
     size = (size + 3) & ~3u;
     if (dest + size > IopRamSize)
@@ -245,13 +382,44 @@ void SifSetDma(u32 src, u32 dest, u32 size, u32 attr)
     if (dest == IopCmdBuffer)
     {
         HandleCommand(g_iopMem + dest);
+        TakeOutbox();
+        DeliverNext();
+    }
+}
+
+void IopRegisterCommand(u32 cid, IopCommandHandler handler) { CommandHandlers()[cid] = std::move(handler); }
+
+void IopSendCommand(u32 cid, std::vector<u8> packet, u32 eeAddress, const void* data, u32 dataSize)
+{
+    if (packet.size() < 16)
+    {
+        packet.resize(16);
+    }
+    if (data != nullptr && dataSize > 0)
+    {
+        // The data goes ahead of the command, as the IOP's SIF DMA sends it
+        std::memcpy(Host(eeAddress & 0x1FFFFFF), data, dataSize);
+    }
+    W32(packet, 0, static_cast<u32>(packet.size()) | (dataSize << 8));
+    W32(packet, 4, eeAddress);
+    W32(packet, 8, cid);
+    {
+        std::lock_guard<std::mutex> lock(g_outLock);
+        g_outbox.push_back(std::move(packet));
+    }
+    std::unique_lock<std::recursive_mutex> lock(g_sifLock, std::try_to_lock);
+    if (lock.owns_lock())
+    {
+        TakeOutbox();
+        DeliverNext();
     }
 }
 
 // The EE's command handler took the last reply: the next can go (its SifSetDChain, or the end of its interrupt)
 void SifReplyTaken()
 {
-    std::lock_guard<std::mutex> lock(g_sifLock);
+    std::lock_guard<std::recursive_mutex> lock(g_sifLock);
+    TakeOutbox();
     if (g_inFlight)
     {
         g_inFlight = false;
@@ -300,5 +468,11 @@ void SifSetReg(u32 reg, u32 value)
     }
 }
 
-void IopUpdate() {}
+void IopUpdate()
+{
+    // The modules' commands sent while the SIF was busy
+    std::lock_guard<std::recursive_mutex> lock(g_sifLock);
+    TakeOutbox();
+    DeliverNext();
+}
 }

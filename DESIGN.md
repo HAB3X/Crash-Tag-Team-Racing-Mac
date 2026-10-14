@@ -37,7 +37,9 @@ The retail executables are stripped. Function starts are:
 
 - the entry point and every `JAL` target
 - every word in the data sections that points into `.text` (function pointers, vtables, handler tables), except jump table
-  entries
+  entries and words landing where the code before runs on into them (a number that looks like an address: compiled functions
+  begin after a jump, a return, padding, or a call that doesn't return followed by a prologue)
+- addresses code builds with `lui` and `addiu`/`ori` (a thread's entry, a callback), where a function can begin
 - targets of `J` and branches that leave the region they're in (tail calls)
 - code a region never reaches after its end (functions only called through pointers that nothing in the data names)
 - where control runs past a region's end (after a call whose delay slot is the region's last instruction)
@@ -49,7 +51,7 @@ address would otherwise split the function and cut it off from its cases.
 The text is cut at the starts, each region's control flow followed from its start, and the rules repeated until nothing changes.
 Jump tables (`lui`/`addiu`/`addu`/`lw`/`jr`, with the `sltiu` bound) are found by walking back from each `jr`. Hand-written
 code that jumps into an unrolled block (`lui`+`addi` base plus an index) gets every instruction of the block as a target. For WoC:
-3,956 functions, 136 jump tables, no unresolved `jr`.
+3,885 functions, 136 jump tables, no unresolved `jr`; for CTTR, 23,210.
 
 ### Translation (`codegen.py`)
 
@@ -70,6 +72,10 @@ code that jumps into an unrolled block (`lui`+`addi` base plus an index) gets ev
 - `JAL` is a C call; `JR RA` is `return`. `J`, branches and fall-through into another function are tail calls (`f(c); return;`).
   `JALR` and `JR` through other registers look the target up in the address table (`ps2_call`); a `JR` with a jump table is a
   `switch` first.
+- `ERET` is a jump to ErrorEPC (with ERL on) or EPC, which the runtime keeps from `MTC0`: back to the caller when that's the
+  return address in RA (Crash Tag Team Racing's libkernel writes timer 2 from kernel mode that way: ERL on, its return
+  address in ErrorEPC, the store, ERET), else to the function starting there. Status's EIE is EI and DI's, and interrupts
+  wait while its EXL or ERL is on.
 - Interrupts are taken at backward branches (`PS2_POLL`: one load and branch) and in the runtime's own calls.
 - Loads and stores go through inline functions: one compare sends 0x10000000-0x1FFFFFFF (the hardware registers) to the
   runtime, everything else is a single host load or store at `ps2_mem + address`.
@@ -95,12 +101,23 @@ frames are named by guest address). Kernel memory below 0x00080000 is ordinary R
 
 ### Hardware registers (`io.cpp`, `dmac.cpp`, `gs.cpp`)
 
-- Timers T0-T3 from the host clock (bus clock 147.456 MHz and its dividers, hblank).
-- DMAC: all ten channels, normal, chain (CNT, NEXT, REF, REFS, REFE, CALL, RET, END, the two-entry address stack, TTE, the
+- Timers T0-T3 from the host clock (bus clock 147.456 MHz and its dividers, hblank), with ZRET; reaching COMP and overflowing
+  set MODE's flags (cleared by writing ones) and raise the INTC's timer causes where MODE asks, the kernel's timer thread waking
+  for the next one (libkernel 2.7's system time counts timer 2's overflows: CTTR's legal screen waited on it forever).
+- DMAC: D_CTRL's DMAE honoured (on at the start, as the kernel leaves it): a transfer started or going on while it's off
+  waits for it. All ten channels, normal, chain (CNT, NEXT, REF, REFS, REFE, CALL, RET, END, the two-entry address stack, TTE, the
   tag IRQ with TIE) and interleave (SPR) modes; D_CTRL, D_STAT (clear/toggle semantics), D_PCR, D_SQWC. A transfer runs to its
   end when CHCR.STR is written, then the channel's interrupt is raised. VIF0/VIF1/GIF go to the hardware layer; the SIF
-  channels belong to the kernel and the IOP (below). MFIFO and the VIF1 read-back (GS to memory) aren't done.
-- INTC: I_STAT, I_MASK; causes raised by the GS (SIGNAL, FINISH, VSINT), the vblank timer and the DMAC.
+  channels belong to the kernel and the IOP (below). The MFIFO (D_CTRL's MFD, D_RBOR, D_RBSR): fromSPR writes into the ring,
+  VIF1 or GIF started in chain mode drains it (tags and their data read in the ring, wrapping; REF's data outside it) as far as
+  fromSPR has filled it, then stays busy with D_STAT's MEIS set until fromSPR adds more (CTTR's renderer). The VIF1 read-back
+  (GS to memory) isn't done.
+- INTC: I_STAT, I_MASK; causes raised by the GS (SIGNAL, FINISH, VSINT), the vblank timer, the DMAC and the VIFs.
+- A VIF code's interrupt bit stalls the VIF once the code is done and raises its INTC cause: the DMA transfer feeding it stops
+  where it is (still busy; the words of a quadword it didn't take wait in its FIFO) until the game cancels the stall
+  (VIFn_FBRST's STC), then goes on. VIFn_STAT shows the stall, VIFn_MARK the MARK code's value (or the EE's own), VIFn_CODE the
+  last code. CTTR's renderer uploads each texture
+  from its VIF1 interrupt handler, between the draws that need it.
 - GS privileged registers: PMODE, SMODE1/2, DISPFB, DISPLAY, BGCOLOR, CSR (FIELD toggling per vblank, VSINT, FINISH, SIGNAL),
   IMR, SIGLBLID; drawing goes through the GIF to the hardware layer's GS.
 - The VIF and GIF FIFOs (0x10004000-0x10007000) take 128-bit writes.
@@ -127,14 +144,14 @@ time). RPC servers stand in for the modules:
 
 | Server | Status |
 |---|---|
-| loadfile (0x80000006) | module loads succeed (the IOP modules themselves are never run); version calls answer the IOPRP image's release |
-| iop heap (0x80000003) | allocations in the IOP memory |
+| loadfile (0x80000006) | modules load from the disc, from a buffer in the IOP's memory, or rom0 (none of them runs: each is known by its own name, its `.iopmod`'s); a name finds a loaded one; a game's own module (`IopRegisterModule`) is started by name with its arguments; version calls answer the IOPRP image's release |
+| iop heap (0x80000003) | FILEIO's heap server (its functions 1-9 read from IOPRP280's FILEIO): allocations as AllocSysMemory's modes (0 when there's no room), frees, a file loaded into the IOP's memory, sysmem's size, free and block queries; first fit from 64 KB up (no module of the console's takes room). Each bound server has a 32 KB receive buffer and no client buffer, as the modules register |
 | fileio (0x80000001) | open, read, lseek, close on the disc image; SDK 2.5's asynchronous completion (result written, semaphore signalled) |
-| cdvd (0x80000592-0x8000059C) | init, media mode, disk type, disk ready, search file |
+| cdvd (0x80000592-0x8000059C) | init, media mode, disk type, the last error, the tray, disk ready (both libcdvd's), search file, reads |
 | padman (0x80000100) | SDK 2.x libpad: port open/close, main mode, pressure mode, actuators; port 0 has a DualShock 2 whose two frames in EE memory are rewritten at every vblank (`iop/padman.cpp`) |
 | mcserv (0x80000400) | the libmc of SDKs before 2.6: init, info, open, close, seek, read, write, flush, chdir, getdir, set file info, delete, format; each port's card is a host folder (`iop/mcserv.cpp`) |
-| sdrdrv | answered with zeros: no game has needed libsd's RPC server yet |
-| a game's own modules | registered by the game (`ps2/iop.h`): WoC's NUSOUND, which drives the SPU2 through libsd (`ps2/sound.h`, below) |
+| sdrdrv | libsd's RPC server (sceSdRemote): init, the parameters, switches, addresses and core attributes on the runtime's libsd; the reverb off (its depths set); the reverb presets, their work areas' clearing and the transfers not done (logged) |
+| a game's own modules | registered by the game (`ps2/iop.h`): RPC servers (WoC's NUSOUND, which drives the SPU2 through libsd, `ps2/sound.h`, below), modules started by name (CTTR's Bink IOP side) and their own SIF commands both ways (`IopRegisterCommand`; `IopSendCommand`, with data sent ahead into the EE's memory, from any thread: a command waits in an outbox while the SIF's lock is taken, and goes at the next SIF exchange or vblank) |
 
 The alternative, emulating the IOP's MIPS R3000 and running the real IRX modules, would bring sound and pads for free but needs an
 IOP CPU, its kernel and the SPU2 timing; it can come later behind the same SIF interface.
@@ -152,7 +169,9 @@ sound memory (sceSdVoiceTrans, done at once).
 The output (`sound/output.cpp`) is 48 kHz stereo through an SDL3 audio stream whose callback makes the samples SDL asks for, on
 SDL's audio thread; with no device (`--headless`, `--mute`) a thread of its own makes them at the wall clock's pace. A driver's
 own thread (the module's, woken by the IOP's hardware timer) is a function the runtime runs every so many samples
-(`SoundSetTimer`), so it sees the voices where they are in the sound it's making. The SPU2 and the driver's state belong to
+(`SoundSetTimer`; another module's alarms `SoundAddTimer`), so it sees the voices where they are in the sound it's making.
+`SdBlockTransLoop` is sceSdBlockTrans's looping write into a core's input (AutoDMA): a buffer in the IOP's memory played a
+half at a time, the transfer's interrupt handler run as each half has been taken (CTTR's movies' sound). The SPU2 and the driver's state belong to
 whoever holds the sound lock: the making of a few hundred samples at a time, or the RPC server answering a call on the game's
 thread; neither waits for anything else. `--audio-dump FILE.wav` writes everything made to a WAV file.
 
@@ -222,7 +241,10 @@ enters the variant made for the interpreter's state, and hands the state back wh
 rest. The results are the interpreter's bit for bit: `PS2_VU1=verify` runs both and compares every XGKICK's packet, and
 `PS2_VU1=interpret` turns the translation off. For WoC: 16 programs, 9,184 instructions, 99.6% of those run translated
 (99.8% in Arctic Antics, whose snow's program clears the status flag's sticky bits with FSSET and tests them with FSAND: both
-translated where the translation's sticky bits are the interpreter's, `Sim.ready_for`).
+translated where the translation's sticky bits are the interpreter's, `Sim.ready_for`). A game whose programs are bare code
+that its own DMA chains upload (CTTR: REF tags into `.vutext`) names them in its config (`[vu1] programs`: each one's EE
+addresses and the micro address it's uploaded at): CTTR's ten, 3,961 instructions, about 98% of those run translated in its
+park (10 frames a second to 30). FCSET is translated (its clip flag through the FMAC pipeline, as CLIP's).
 
 ### Controllers and memory cards
 
@@ -279,8 +301,8 @@ second; `--log` turns on the channels' logs; `--audio-dump FILE.wav` keeps the s
 
 ### Not done yet
 
-The SPU2's DMA timing and AutoDMA input from the IOP's side (no driver uses them yet), libsd's reverb presets, rumble, the
-memory card's newer protocol (libmc 2.6 on), movies (IPU), MFIFO, the VU flags in macro mode, the FPU's exact rounding.
+The SPU2's DMA timing, libsd's reverb presets, rumble, the
+memory card's newer protocol (libmc 2.6 on), movies (IPU), the VU flags in macro mode, the FPU's exact rounding.
 
 ## Repositories and licences
 

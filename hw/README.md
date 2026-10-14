@@ -31,6 +31,9 @@ here unchanged except for:
   (`selfCopyFor_`, as PCSX2's hardware renderers do), instead of a copy of the whole target and two render passes for each
   primitive; WoC's Warp Room has about 300 such primitives a frame and went from 10-20 frames a second at 3x to 60.
   `TWIN_HW_EXACT_FEEDBACK=1` copies for each primitive again
+- `ee/vif.h` and `ee/vif.cpp`: a code's interrupt bit stalls the VIF once the code is done (`Process` returns the words it
+  took, `CancelStall` is FBRST's STC) and calls the runtime's `interrupt` function (the INTC's VIF0 or VIF1 cause); `lastCode`
+  is VIFn_CODE. Crash Tag Team Racing's renderer starts each texture's upload from its VIF1 interrupt handler
 - `gs/workers.cpp`: the workers ask macOS for the performance cores (QoS user interactive): rows are shared out evenly, so
   a worker on an efficiency core held every primitive up
 - `hw/hwgs.cpp`, for Wrath of Cortex's depth-of-field effect in its levels (stripes across the far scenery, 11 frames a

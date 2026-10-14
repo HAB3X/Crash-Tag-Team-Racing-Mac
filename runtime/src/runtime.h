@@ -113,8 +113,11 @@ extern u32 g_dmacStat;
 u64 BusCycles();
 // Whether the guest is in an interrupt handler
 bool InInterrupt();
-// COP0 Status's EIE: EI and DI
-bool InterruptsEnabled();
+// COP0 Status as the game reads it: kernel mode, IE, INT0 and INT1 on, EIE as EI and DI set it, EXL and ERL as the game set them
+u32 KernelStatus();
+// Status written (MTC0): its EIE as EI or DI would set it, its EXL and ERL kept (interrupts wait while either is on); the rest
+// is the kernel's
+void KernelSetStatus(Ps2Cpu* c, u32 status);
 // The PC menus' pause: the game stops at its next poll point (and the timer makes no vblanks or alarms; its time stands still)
 // until it's let go
 void KernelPause(bool paused);
@@ -124,9 +127,15 @@ void KernelOnGameSide(std::function<void()> work);
 
 // --- io.cpp
 void IoInit();
+// The timers' events since the last call (COMP reached, overflow): their MODE flags set, and where MODE asks, the INTC's timer
+// cause (9-12) raised. Returns the bus cycle of the next event (~0: none), for the kernel's timer thread to wake at. Several
+// events of one timer between two calls raise one interrupt
+u64 IoTimerEvents();
 
 // --- dmac.cpp
 void DmacInit();
+// A VIF's stall cancelled (VIFn_FBRST's STC): what it held, then its DMA transfer, go on
+void DmacVifUnstall(int vif);
 u32 DmacRead(u32 address);
 void DmacWrite(u32 address, u32 value);
 // The channels' data from the SIF (the IOP side): SIF0 (IOP to EE) moved by the IOP's HLE
@@ -282,6 +291,8 @@ std::string InputPrompt();
 
 // --- disc.cpp
 bool DiscOpen(const std::string& path);
+// Whether the disc is a DVD (UDF's volume recognition on it, as a PlayStation 2 DVD has), not a CD
+bool DiscIsDvd();
 // A file on the disc by its ISO 9660 path ("\\SYS\\LIBSD.IRX;1" or "/SYS/LIBSD.IRX"): its first sector and size
 bool DiscFind(const std::string& path, u32& lsn, u32& size);
 bool DiscReadSectors(u32 lsn, u32 count, u8* out);
@@ -293,7 +304,7 @@ void IopInit();
 void SifSetDma(u32 src, u32 dest, u32 size, u32 attr);
 u32 SifGetReg(u32 reg);
 void SifSetReg(u32 reg, u32 value);
-// Work the IOP has queued for the EE (replies), done between guest instructions
+// The modules' commands to the EE that waited for the SIF's lock, sent (the kernel's timer thread, every vblank)
 void IopUpdate();
 // The EE took the IOP's last reply (its SifSetDChain, or the end of its SIF0 interrupt)
 void SifReplyTaken();

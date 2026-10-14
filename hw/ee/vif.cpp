@@ -81,10 +81,22 @@ u32 Vif::DataWords(u32 code) const
     }
 }
 
-void Vif::Process(const u32* words, u32 count)
+u32 Vif::Process(const u32* words, u32 count)
 {
     u32 at = 0;
-    while (at < count)
+    // A code done: its interrupt bit stalls the VIF there
+    auto done = [&](u32 code) {
+        lastCode = code;
+        if ((code & 0x80000000u) != 0)
+        {
+            stalled_ = true;
+            if (interrupt != nullptr)
+            {
+                interrupt(index_);
+            }
+        }
+    };
+    while (at < count && !stalled_)
     {
         if (pending_)
         {
@@ -96,6 +108,7 @@ void Vif::Process(const u32* words, u32 count)
                 pending_ = false;
                 Execute(pendingCode_, pendingData_.data());
                 pendingData_.clear();
+                done(pendingCode_);
             }
 
             continue;
@@ -106,6 +119,7 @@ void Vif::Process(const u32* words, u32 count)
         if (needed == 0)
         {
             Execute(code, nullptr);
+            done(code);
             continue;
         }
 
@@ -113,6 +127,7 @@ void Vif::Process(const u32* words, u32 count)
         {
             Execute(code, words + at);
             at += needed;
+            done(code);
             continue;
         }
 
@@ -122,6 +137,8 @@ void Vif::Process(const u32* words, u32 count)
         pendingData_.assign(words + at, words + count);
         at = count;
     }
+
+    return at;
 }
 
 void Vif::StartProgram(u32 address, bool resume)

@@ -226,8 +226,6 @@ def emit_plain(i, ctx):
         return "ps2_ei(c);"
     if n == "di":
         return "ps2_di(c);"
-    if n == "eret":
-        return f"ps2_eret(c, 0x{i.addr:08x});"
     # --- COP1
     if n == "mfc1":
         return set32(rt, f"c->f[{i.fs}].u")
@@ -413,12 +411,13 @@ def branch_condition(i):
 
 
 class FunctionEmitter:
-    def __init__(self, program, start, end, names, overrides):
+    def __init__(self, program, start, end, names, overrides, setjmps=frozenset()):
         self.p = program
         self.start = start
         self.end = end
         self.names = names            # address -> C name of every function (overrides already applied)
         self.overrides = overrides
+        self.setjmps = setjmps        # the game's setjmp functions (the config's)
 
     def inside(self, a):
         return self.start <= a < self.end
@@ -480,7 +479,7 @@ class FunctionEmitter:
 
     @staticmethod
     def ends_flow(i):
-        if i.kind == "jump" or i.kind == "jr":
+        if i.kind in ("jump", "jr", "eret"):
             return True
         if i.kind in ("branch", "branch_likely") and not i.link:
             from analysis import is_unconditional
@@ -530,7 +529,12 @@ class FunctionEmitter:
         if k == "jump":
             return self.delay(i) + [self.goto_or_tail(i.target)]
         if k == "call":
-            return self.delay(i) + [f"c->r[31].sd[0] = (s32)0x{i.addr + 8:08x}u;", self.call_expr(i.target)]
+            call = self.call_expr(i.target)
+            if i.target in self.setjmps:
+                # The host's place is kept here, in the caller's frame, for longjmp to come back to (ps2_longjmp); the game's
+                # setjmp keeps the registers
+                call = f"if (_setjmp(*ps2_setjmp_buffer(c, {u32(4)})) == 0) {call}"
+            return self.delay(i) + [f"c->r[31].sd[0] = (s32)0x{i.addr + 8:08x}u;", call]
         if k == "jr":
             if i.rs == 31:
                 return self.delay(i) + ["return;"]
@@ -552,4 +556,11 @@ class FunctionEmitter:
             return out
         if k == "syscall":
             return [emit_plain(i, None)]
+        if k == "eret":
+            # Back from kernel mode to the address in ErrorEPC or EPC: a game's own kernel-mode code (CTTR's libkernel puts its
+            # return address in ErrorEPC to write a timer with ERL set) goes back to its caller as JR RA would, or on to a
+            # function start
+            return [f"{{ u32 t = ps2_eret(c, 0x{i.addr:08x}u);",
+                    f"  if (t == {u32(31)}) return;",
+                    "  ps2_call(c, t); return; }"]
         raise ValueError(f"unhandled {i!r}")

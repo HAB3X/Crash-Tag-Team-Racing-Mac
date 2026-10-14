@@ -2,6 +2,7 @@
 // the CD/DVD driver, the memory card (mcserv.cpp), the pads (padman.cpp), and stand-ins answering zeros for the rest. Every call to a server or function not done here is logged
 // once with its arguments: that log is the list of what's left.
 #include "iop.h"
+#include "ps2/sound.h"
 
 #include <map>
 
@@ -18,7 +19,15 @@ struct OpenFile
 };
 std::map<int, OpenFile> g_files;
 int g_nextFd = 3;
+
+// The modules loaded (their IDs and names, the modules' own) and the game's own modules (IopRegisterModule), by name
 int g_nextModule = 1;
+std::map<int, std::string> g_modules;
+std::map<std::string, IopModuleStart>& GameModules()
+{
+    static std::map<std::string, IopModuleStart> m;
+    return m;
+}
 
 void Dump(const RpcCall& c)
 {
@@ -107,44 +116,188 @@ void Version(RpcCall& c)
     std::memcpy(c.out.data(), g_version, 4);
 }
 
-// --- the servers
-void LoadFile(RpcCall& c)
+// An IOP module's name, as its .iopmod section (an ELF section of type 0x70000080) has it after six words and the version
+std::string ModuleName(const u8* elf, size_t size)
 {
-    if (c.fno == 255)
+    auto r32 = [&](size_t off) { u32 v = 0; if (off + 4 <= size) std::memcpy(&v, elf + off, 4); return v; };
+    auto r16 = [&](size_t off) { u16 v = 0; if (off + 2 <= size) std::memcpy(&v, elf + off, 2); return v; };
+    if (size < 52 || std::memcmp(elf, "\x7f" "ELF", 4) != 0)
     {
-        Version(c);
-        return;
+        return "";
     }
-    // Find the module's path in the request
-    std::string path;
-    for (u32 off = 0; off + 8 < c.inSize && path.empty(); off += 4)
+    u32 shoff = r32(32);
+    u32 count = r16(48);
+    for (u32 n = 0; n < count; n++)
     {
-        std::string s = c.InString(off, 252);
-        if (s.find(':') != std::string::npos && s.size() > 4)
+        size_t h = shoff + n * 40;
+        if (r32(h + 4) == 0x70000080)
         {
-            path = s;
+            size_t at = r32(h + 16) + 26;
+            std::string name;
+            while (at < size && elf[at] != 0 && name.size() < 64)
+            {
+                name += static_cast<char>(elf[at++]);
+            }
+            return name;
+        }
+    }
+    return "";
+}
+
+// A module loaded: its ID, and the game's own module of that name started with the arguments (arg_len bytes, each ending
+// with a zero)
+int ModuleLoaded(const std::string& name, const RpcCall& c, u32 argLength)
+{
+    std::vector<std::string> args;
+    std::string arg;
+    for (u32 i = 0; i < std::min<u32>(argLength, 252); i++)
+    {
+        char ch = static_cast<char>(c.in[260 + i]);
+        if (ch == 0)
+        {
+            args.push_back(arg);
+            arg.clear();
+        }
+        else
+        {
+            arg += ch;
         }
     }
     int id = g_nextModule++;
-    Log("IOP: load module %s (function %u): id %d", path.empty() ? "(from memory)" : path.c_str(), c.fno, id);
-    c.Out32(0, static_cast<u32>(id));
-    c.Out32(4, 0);
+    g_modules[id] = name;
+    auto it = GameModules().find(name);
+    Log("IOP: module %s loaded: id %d%s", name.empty() ? "(unnamed)" : name.c_str(), id,
+        it != GameModules().end() ? ", the game's" : "");
+    if (it != GameModules().end())
+    {
+        it->second(args);
+    }
+    return id;
+}
+
+// --- the servers
+// The module loader (loadfile): 0 loads a module from a path (arg_len at 0, the path at 8, the arguments at 260), 6 from a
+// buffer in the IOP's memory (its address at 0, arg_len at 4), 9 finds a loaded module by name (at 8). The modules
+// themselves never run here: a module of the game's own (IopRegisterModule) is started by name
+void LoadFile(RpcCall& c)
+{
+    switch (c.fno)
+    {
+    case 255:
+        Version(c);
+        return;
+    case 0:
+    {
+        std::string path = c.InString(8, 252);
+        std::string name;
+        u32 lsn, size;
+        if (path.rfind("rom0:", 0) == 0)
+        {
+            // The console's own modules: named by their file
+            name = path.substr(5);
+        }
+        else if (DiscFind(DiscPath(path), lsn, size))
+        {
+            std::vector<u8> elf((size + 2047) / 2048 * 2048);
+            DiscReadSectors(lsn, static_cast<u32>(elf.size() / 2048), elf.data());
+            name = ModuleName(elf.data(), size);
+        }
+        else
+        {
+            Log("IOP: load module %s: no such file", path.c_str());
+            c.Out32(0, static_cast<u32>(-203)); // KE_NOFILE
+            return;
+        }
+        PS2_LOG(LogIop, "IOP: load module %s", path.c_str());
+        c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(0))));
+        c.Out32(4, 0);
+        return;
+    }
+    case 6:
+    {
+        u32 at = c.In32(0) & (IopRamSize - 1);
+        std::string name = ModuleName(IopMem() + at, IopRamSize - at);
+        c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(4))));
+        c.Out32(4, 0);
+        return;
+    }
+    case 9:
+    {
+        std::string name = c.InString(8, 56);
+        for (const auto& [id, loaded] : g_modules)
+        {
+            if (loaded == name)
+            {
+                c.Out32(0, static_cast<u32>(id));
+                return;
+            }
+        }
+        c.Out32(0, static_cast<u32>(-202)); // KE_UNKNOWN_MODULE
+        return;
+    }
+    default:
+        Unhandled(c);
+        return;
+    }
 }
 
 void Heap(RpcCall& c)
 {
     switch (c.fno)
     {
-    case 1: // alloc
+    case 1: // alloc: 0 when there's no room, as AllocSysMemory answers
     {
         u32 size = c.In32(0);
-        u32 at = IopAlloc(size);
+        u32 at = IopAllocMode(0, size, 0);
         PS2_LOG(LogIop, "IOP heap: alloc %u at %08x", size, at);
+        if (at == 0)
+        {
+            Log("IOP heap: no room for %u bytes (%u free, the largest block %u)", size, IopFreeTotal(false),
+                IopFreeTotal(true));
+        }
         c.Out32(0, at);
         break;
     }
     case 2: // free
+    {
+        u32 at = c.In32(0);
+        bool freed = IopFree(at);
+        PS2_LOG(LogIop, "IOP heap: free %08x%s", at, freed ? "" : " (not allocated)");
+        c.Out32(0, freed ? 0 : static_cast<u32>(-1));
+        break;
+    }
+    case 3: // a file loaded into the IOP's memory: its address at 0, its name at 4
+    {
+        std::vector<u8> data;
+        std::string name = c.InString(4, 252);
+        if (!DiscReadFile(DiscPath(name), data))
+        {
+            Log("IOP heap: load %s: no such file", name.c_str());
+            c.Out32(0, static_cast<u32>(-1));
+            break;
+        }
+        u32 at = c.In32(0) & (IopRamSize - 1);
+        std::memcpy(IopMem() + at, data.data(), std::min<size_t>(data.size(), IopRamSize - at));
         c.Out32(0, 0);
+        break;
+    }
+    case 4: // allocate as AllocSysMemory: size at 0, mode at 4, address at 8
+        c.Out32(0, IopAllocMode(c.In32(4), c.In32(0), c.In32(8)));
+        break;
+    case 5: // QueryMemSize
+        c.Out32(0, IopRamSize);
+        break;
+    case 6: // QueryMaxFreeMemSize
+        c.Out32(0, IopFreeTotal(true));
+        break;
+    case 7: // QueryTotalFreeMemSize
+        c.Out32(0, IopFreeTotal(false));
+        break;
+    case 8: // QueryBlockTopAddress
+        c.Out32(0, IopBlockOf(c.In32(0), false));
+        break;
+    case 9: // QueryBlockSize
+        c.Out32(0, IopBlockOf(c.In32(0), true));
         break;
     default:
         Unhandled(c);
@@ -235,6 +388,74 @@ void FileIo(RpcCall& c)
     }
 }
 
+// SDRDRV, libsdr's server (sceSdRemote): libsd's calls made on the EE's behalf (read from SDRDRV.IRX 4.0.1): the command
+// (the function number, a core in its low bits where it takes one) and its arguments as words from 4 on; the answer's word 0
+// the call's result
+void Sdr(RpcCall& c)
+{
+    u32 command = c.fno & 0xFFF0;
+    u32 core = c.fno & 0xF;
+    u32 result = 0;
+    auto lock = SoundLock();
+    switch (command)
+    {
+    case 0x8000: // sceSdInit
+        if (c.In32(4) == 0)
+        {
+            SdInit();
+        }
+        break;
+    case 0x8010:
+        SdSetParam(c.In16(4), c.In16(8));
+        break;
+    case 0x8020:
+        result = SdGetParam(c.In16(4));
+        break;
+    case 0x8030:
+        SdSetSwitch(c.In16(4), c.In32(8));
+        break;
+    case 0x8040:
+        result = SdGetSwitch(c.In16(4));
+        break;
+    case 0x8050:
+        SdSetAddr(c.In16(4), c.In32(8));
+        break;
+    case 0x8060:
+        result = SdGetAddr(c.In16(4));
+        break;
+    case 0x8070:
+        SdSetCoreAttr(c.In16(4), c.In16(8));
+        break;
+    case 0x8130: // sceSdSetEffectAttr(core, the sceSdEffectAttr at 0: core, mode, depth left, depth right, delay, feedback)
+    {
+        u16 mode = c.In16(2);
+        if ((mode & 0xFF) != 0)
+        {
+            // A reverb preset: libsd's tables of the reverb's registers for each aren't here yet
+            Unhandled(c);
+            break;
+        }
+        // The reverb off (mode 0; 0x100 asks for its work area cleared, see 0x8150): its registers stay as sceSdInit left
+        // them, zeros, so only the effect's output volumes, the depths, are set
+        SdSetParam(static_cast<u16>(SD_P_EVOLL | core), c.In16(4));
+        SdSetParam(static_cast<u16>(SD_P_EVOLR | core), c.In16(6));
+        break;
+    }
+    case 0x8150: // sceSdClearEffectWorkArea(core, channel, mode)
+        if ((c.In32(12) & 0xFF) != 0)
+        {
+            Unhandled(c);
+        }
+        // The reverb off's area (a few words at the effects' end address) isn't cleared: with its registers and depths zeros
+        // its output is silent whatever the area holds
+        break;
+    default:
+        Unhandled(c);
+        break;
+    }
+    c.Out32(0, result);
+}
+
 void Cdvd(RpcCall& c)
 {
     switch (c.sid)
@@ -242,7 +463,8 @@ void Cdvd(RpcCall& c)
     case 0x80000592: // init
         c.Out32(0, 1);
         return;
-    case 0x8000059A: // disk ready: complete
+    case 0x8000059A: // disk ready: complete (SCECdComplete)
+    case 0x8000059C: // the same, in libcdvd 2.6 on
         c.Out32(0, 2);
         return;
     case 0x80000597: // search file: { sceCdlFILE (32 bytes), ?, name[256], the EE's sceCdlFILE }
@@ -301,8 +523,21 @@ void Cdvd(RpcCall& c)
             c.Out32(0, 1);
             return;
         }
-        case 0x0E: // the drive's state before a read (6 would stop it): a PS2 CD's
-            c.Out32(0, 0x12);
+        case 0x0D: // read into the IOP's memory (libcdvd 2.6 on): lsn, sectors, the IOP's buffer, the mode, as a read's
+        {
+            u32 lsn = c.In32(0);
+            u32 sectors = c.In32(4);
+            u32 dest = c.In32(8) & (IopRamSize - 1);
+            if (dest + sectors * 2048 <= IopRamSize)
+            {
+                DiscReadSectors(lsn, sectors, IopMem() + dest);
+            }
+            PS2_LOG(LogIop, "cdvd read %u sectors from %u to IOP %06x", sectors, lsn, dest);
+            c.Out32(0, 1);
+            return;
+        }
+        case 0x0E: // the disc's type again, before a read (6 would stop it): as the S command's
+            c.Out32(0, DiscIsDvd() ? 0x14 : 0x12);
             return;
         default:
             break;
@@ -311,8 +546,15 @@ void Cdvd(RpcCall& c)
     case 0x80000593: // S commands
         switch (c.fno)
         {
-        case 0x03: // disk type: a PlayStation 2 CD
-            c.Out32(0, 0x12);
+        case 0x03: // disk type: a PlayStation 2 DVD (SCECdPS2DVD) or CD (SCECdPS2CD)
+            c.Out32(0, DiscIsDvd() ? 0x14 : 0x12);
+            return;
+        case 0x04: // the last command's error: none
+            c.Out32(0, 0);
+            return;
+        case 0x05: // the tray (its mode in): done, never opened since the last ask
+            c.Out32(0, 1);
+            c.Out32(4, 0);
             return;
         case 0x22: // media mode
             c.Out32(0, 1);
@@ -349,7 +591,7 @@ const ServerName g_names[] = {
     {0x80000596, "cdvd"},
     {0x80000597, "cdvd search file"},
     {0x8000059A, "cdvd disk ready"},
-    {0x8000059C, "cdvd"},
+    {0x8000059C, "cdvd disk ready"},
     {0x80000701, "sdrdrv"},
 };
 }
@@ -366,6 +608,10 @@ std::map<u32, Registered>& Registry()
 }
 
 void IopRegisterServer(u32 sid, const char* name, RpcServer server) { Registry()[sid] = {name, std::move(server)}; }
+
+void IopRegisterModule(const char* name, IopModuleStart start) { GameModules()[name] = std::move(start); }
+
+u8* IopMemory(u32 address) { return IopMem() + (address & (IopRamSize - 1)); }
 
 u8* EeMemory(u32 address) { return Host(address & 0x1FFFFFFF); }
 
@@ -434,6 +680,9 @@ void IopServe(RpcCall& c)
     case 0x8000059A:
     case 0x8000059C:
         Cdvd(c);
+        break;
+    case 0x80000701:
+        Sdr(c);
         break;
     default:
         Unhandled(c);
