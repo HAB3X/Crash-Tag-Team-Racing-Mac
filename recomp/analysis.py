@@ -52,6 +52,41 @@ class Program:
                     out.add(w)
         return out
 
+    def code_pointers(self):
+        """Addresses in the text that code builds with LUI and ADDIU or ORI on the same register (a function's address handed
+        on: a thread's entry, a callback)."""
+        out = set()
+        for n, i in enumerate(self.insns):
+            if i.name != "lui" or i.rt == 0:
+                continue
+            for j in self.insns[n + 1:n + 12]:
+                if j.name in ("addiu", "daddiu", "ori") and j.rs == i.rt:
+                    low = j.uimm if j.name == "ori" else j.imm
+                    v = ((i.uimm << 16) + low) & 0xFFFFFFFF
+                    if self.in_text(v) and v % 4 == 0:
+                        out.add(v)
+                    break
+                if writes_gpr(j) == i.rt:
+                    break
+        return out
+
+    def runs_into(self, a):
+        """Whether the code before a runs on into it: a's not where a function can begin. A call's return lands there too,
+        unless the call doesn't return (exit, an assert's stop) and a function's prologue follows; padding (zero words) and
+        the end of a function (a jump, JR, an unconditional branch, ERET) don't."""
+        if not self.in_text(a - 8):
+            return False
+        before = self.insn(a - 8)
+        if before.kind in ("branch", "branch_likely", "jump", "call", "jr", "jalr"):
+            if before.kind in ("jump", "jr") or (before.kind == "branch" and not before.link and is_unconditional(before)):
+                return False
+            if before.link:
+                i = self.insn(a)
+                return not (i.name == "addiu" and i.rt == 29 and i.rs == 29 and i.imm < 0)
+            return True
+        last = self.insn(a - 4)
+        return last.word != 0 and last.kind != "eret"
+
     # --- jump tables
     def find_jump_table(self, jr_addr, lo, hi):
         """The targets of a `jr reg` that ends a switch: lw reg, %lo(T)(base) where base = lui %hi(T) [+ index]."""
@@ -256,6 +291,13 @@ class Program:
         for jr, targets in self.jump_tables.items():
             low, high = min(min(targets), jr), max(targets)
             pointers -= {p for p in pointers if low < p <= high and p not in called}
+        # A number in the data that lands where code runs on into it (the middle of a function) isn't a function pointer:
+        # compiled functions begin after the end of the one before. CTTR's GS register tables hold words like 0x00350800
+        # that cut a switch off from its own jump table's cases
+        pointers = {p for p in pointers if p in called or not self.runs_into(p)}
+        # A function's address built in code is a start too, where one can begin (CTTR's 0x3B8B10, a thread's entry, comes
+        # after two unreached instructions that would otherwise run into it)
+        pointers |= {p for p in self.code_pointers() - jt_targets if not self.runs_into(p)}
         starts = {s for s in starts if self.in_text(s)} - not_starts
         starts |= pointers
         cache = {}

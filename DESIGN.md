@@ -37,7 +37,9 @@ The retail executables are stripped. Function starts are:
 
 - the entry point and every `JAL` target
 - every word in the data sections that points into `.text` (function pointers, vtables, handler tables), except jump table
-  entries
+  entries and words landing where the code before runs on into them (a number that looks like an address: compiled functions
+  begin after a jump, a return, padding, or a call that doesn't return followed by a prologue)
+- addresses code builds with `lui` and `addiu`/`ori` (a thread's entry, a callback), where a function can begin
 - targets of `J` and branches that leave the region they're in (tail calls)
 - code a region never reaches after its end (functions only called through pointers that nothing in the data names)
 - where control runs past a region's end (after a call whose delay slot is the region's last instruction)
@@ -49,7 +51,7 @@ address would otherwise split the function and cut it off from its cases.
 The text is cut at the starts, each region's control flow followed from its start, and the rules repeated until nothing changes.
 Jump tables (`lui`/`addiu`/`addu`/`lw`/`jr`, with the `sltiu` bound) are found by walking back from each `jr`. Hand-written
 code that jumps into an unrolled block (`lui`+`addi` base plus an index) gets every instruction of the block as a target. For WoC:
-3,956 functions, 136 jump tables, no unresolved `jr`.
+3,885 functions, 136 jump tables, no unresolved `jr`; for CTTR, 23,210.
 
 ### Translation (`codegen.py`)
 
