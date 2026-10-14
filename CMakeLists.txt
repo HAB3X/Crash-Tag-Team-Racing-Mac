@@ -123,8 +123,8 @@ function(ps2_recompile target)
     endforeach()
     add_custom_command(
         OUTPUT ${vu1}
-        COMMAND ${PS2_PYTHON} ${PS2_RUNTIME_ROOT}/recomp/vutranslate.py ${elf} ${out}/vu1programs.cpp
-        DEPENDS ${elf} ${PS2_RUNTIME_ROOT}/recomp/vutranslate.py ${PS2_RUNTIME_ROOT}/recomp/vudecode.py
+        COMMAND ${PS2_PYTHON} ${PS2_RUNTIME_ROOT}/recomp/vutranslate.py ${elf} ${out}/vu1programs.cpp --config ${ARG_CONFIG}
+        DEPENDS ${elf} ${ARG_CONFIG} ${PS2_RUNTIME_ROOT}/recomp/vutranslate.py ${PS2_RUNTIME_ROOT}/recomp/vudecode.py
         COMMENT "Translating ${ARG_EXECUTABLE}'s VU1 programs"
         VERBATIM)
     target_sources(${target} PRIVATE ${vu1})

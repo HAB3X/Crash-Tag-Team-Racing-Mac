@@ -227,7 +227,11 @@ flight: FMAC results and their flags, Q, ILW's results, the branch read rule's o
 timing are worked out at build time. `hw/ee/vu1translate.cpp` finds the program micro memory holds wherever it was uploaded,
 enters the variant made for the interpreter's state, and hands the state back where there's none; the interpreter runs the
 rest. The results are the interpreter's bit for bit: `PS2_VU1=verify` runs both and compares every XGKICK's packet, and
-`PS2_VU1=interpret` turns the translation off. For WoC: 16 programs, 9,184 instructions, 99.6% of those run translated.
+`PS2_VU1=interpret` turns the translation off. For WoC: 16 programs, 9,184 instructions, 99.6% of those run translated. A
+game whose programs are bare code that its own DMA chains upload (CTTR: REF tags into `.vutext`) names them in its config
+(`[vu1] programs`: each one's EE addresses and the micro address it's uploaded at): CTTR's ten, 3,961 instructions, about 98% of
+those run translated in its park (10 frames a second to 30). FCSET is translated (its clip flag through the FMAC pipeline, as
+CLIP's).
 
 ### Controllers and memory cards
 
