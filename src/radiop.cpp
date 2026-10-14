@@ -13,10 +13,12 @@
 //   2 close: the handle (16); answer 2
 //   3 the timer: its period in milliseconds (16; 6,001 and over: 6 s); the module's alarm sends answer 4 at each period
 //   4 the sound: a core (16), on (20), an IOP buffer of 4 KB (24). On: the buffer played round in the core's input
-//     (sceSdBlockTrans in loop mode), and at each half's end answer 5 { the core (16), the half to fill now (20) }. Off: the
-//     transfer stopped, the core's input volume (BVOLL, BVOLR) 0
-//   5 volumes: a core (16), MVOLL (20), MVOLR (24), BVOLL (28), BVOLR (32), each -1 for unchanged; the input's set at the
-//     next half's end
+//     (sceSdBlockTrans in loop mode), at each half's end answer 5 { the core (16), the half to fill now (20) }, and the
+//     input's volume last given set again at the first half's end (the on path ends in the volume request's tail, 0x4B8,
+//     which marks the core's volume waiting). Off: the transfer stopped, the core's input volume (BVOLL, BVOLR) 0. The game
+//     sends the volume once, at its boot (0x459608), so every movie after the first gets it back only this way
+//   5 volumes: a core (16), MVOLL (20), MVOLR (24), BVOLL (28), BVOLR (32), each -1 for unchanged; the input's kept by the
+//     module (0x10D0, 0x10D8: 0 until given) and set at the next half's end
 // At its start the module sends answer 3 (ready), sets the timer to 6 s and, with "1" as its second argument, calls
 // sceSdInit(0).
 #include "ps2/iop.h"
@@ -161,8 +163,9 @@ void Queue(Request r)
 
 // --- the timer and the sound, in the command handler
 int g_timer = -1;
-// Each core's input volume to set at its next half (-1: none)
-s32 g_inputVolume[2][2] = {{-1, -1}, {-1, -1}};
+// Each core's input volume as the module keeps it (BVOLL, BVOLR), and whether it's to be set at the core's next half
+u16 g_inputVolume[2][2] = {};
+bool g_inputVolumeWaiting[2] = {};
 
 void SetTimer(u32 ms)
 {
@@ -175,18 +178,15 @@ void SetTimer(u32 ms)
     g_timer = SoundAddTimer(samples, [] { Answer(4, {}); });
 }
 
-// The end of a half: the input's waiting volumes set, then the EE asked to fill the half just played (bit 24 of the
-// status is the half now being taken)
+// The end of a half: the input's volume set if it's waiting, then the EE asked to fill the half just played (bit 24 of
+// the status is the half now being taken)
 void HalfDone(s32 core)
 {
-    for (int side = 0; side < 2; side++)
+    if (g_inputVolumeWaiting[core])
     {
-        if (g_inputVolume[core][side] >= 0)
-        {
-            SdSetParam(static_cast<u16>((side == 0 ? SD_P_BVOLL : SD_P_BVOLR) | core),
-                       static_cast<u16>(g_inputVolume[core][side]));
-            g_inputVolume[core][side] = -1;
-        }
+        g_inputVolumeWaiting[core] = false;
+        SdSetParam(static_cast<u16>(SD_P_BVOLL | core), g_inputVolume[core][0]);
+        SdSetParam(static_cast<u16>(SD_P_BVOLR | core), g_inputVolume[core][1]);
     }
     u32 status = SdBlockTransStatus(core);
     u32 base = (status & 0xFFFFFF) - ((status >> 24) & 1) * (BlockSize / 2);
@@ -200,6 +200,7 @@ void Sound(s32 core, bool on, u32 buffer)
     if (on)
     {
         std::memset(IopMemory(buffer), 0, BlockSize);
+        g_inputVolumeWaiting[core] = true;
         SdBlockTransLoop(core, buffer, BlockSize, HalfDone);
         return;
     }
@@ -225,7 +226,8 @@ void Volumes(s32 core, const u8* p)
         s32 v = static_cast<s32>(Get32(p, 28 + side * 4));
         if (v != -1)
         {
-            g_inputVolume[core][side] = v & 0xFFFF;
+            g_inputVolume[core][side] = static_cast<u16>(v);
+            g_inputVolumeWaiting[core] = true;
         }
     }
 }
