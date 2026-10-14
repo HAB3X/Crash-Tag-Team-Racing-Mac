@@ -150,7 +150,7 @@ time). RPC servers stand in for the modules:
 | cdvd (0x80000592-0x8000059C) | init, media mode, disk type, the last error, the tray, disk ready (both libcdvd's), search file, reads |
 | padman (0x80000100) | SDK 2.x libpad: port open/close, main mode, pressure mode, actuators; port 0 has a DualShock 2 whose two frames in EE memory are rewritten at every vblank (`iop/padman.cpp`) |
 | mcserv (0x80000400) | the libmc of SDKs before 2.6: init, info, open, close, seek, read, write, flush, chdir, getdir, set file info, delete, format; each port's card is a host folder (`iop/mcserv.cpp`) |
-| sdrdrv | answered with zeros: no game has needed libsd's RPC server yet |
+| sdrdrv | libsd's RPC server (sceSdRemote): init, the parameters, switches, addresses and core attributes on the runtime's libsd; the reverb off (its depths set); the reverb presets, their work areas' clearing and the transfers not done (logged) |
 | a game's own modules | registered by the game (`ps2/iop.h`): RPC servers (WoC's NUSOUND, which drives the SPU2 through libsd, `ps2/sound.h`, below), modules started by name (CTTR's Bink IOP side) and their own SIF commands both ways (`IopRegisterCommand`; `IopSendCommand`, with data sent ahead into the EE's memory, from any thread: a command waits in an outbox while the SIF's lock is taken, and goes at the next SIF exchange or vblank) |
 
 The alternative, emulating the IOP's MIPS R3000 and running the real IRX modules, would bring sound and pads for free but needs an

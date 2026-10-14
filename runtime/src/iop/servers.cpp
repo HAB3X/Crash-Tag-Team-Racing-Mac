@@ -2,6 +2,7 @@
 // the CD/DVD driver, the memory card (mcserv.cpp), the pads (padman.cpp), and stand-ins answering zeros for the rest. Every call to a server or function not done here is logged
 // once with its arguments: that log is the list of what's left.
 #include "iop.h"
+#include "ps2/sound.h"
 
 #include <map>
 
@@ -387,6 +388,74 @@ void FileIo(RpcCall& c)
     }
 }
 
+// SDRDRV, libsdr's server (sceSdRemote): libsd's calls made on the EE's behalf (read from SDRDRV.IRX 4.0.1): the command
+// (the function number, a core in its low bits where it takes one) and its arguments as words from 4 on; the answer's word 0
+// the call's result
+void Sdr(RpcCall& c)
+{
+    u32 command = c.fno & 0xFFF0;
+    u32 core = c.fno & 0xF;
+    u32 result = 0;
+    auto lock = SoundLock();
+    switch (command)
+    {
+    case 0x8000: // sceSdInit
+        if (c.In32(4) == 0)
+        {
+            SdInit();
+        }
+        break;
+    case 0x8010:
+        SdSetParam(c.In16(4), c.In16(8));
+        break;
+    case 0x8020:
+        result = SdGetParam(c.In16(4));
+        break;
+    case 0x8030:
+        SdSetSwitch(c.In16(4), c.In32(8));
+        break;
+    case 0x8040:
+        result = SdGetSwitch(c.In16(4));
+        break;
+    case 0x8050:
+        SdSetAddr(c.In16(4), c.In32(8));
+        break;
+    case 0x8060:
+        result = SdGetAddr(c.In16(4));
+        break;
+    case 0x8070:
+        SdSetCoreAttr(c.In16(4), c.In16(8));
+        break;
+    case 0x8130: // sceSdSetEffectAttr(core, the sceSdEffectAttr at 0: core, mode, depth left, depth right, delay, feedback)
+    {
+        u16 mode = c.In16(2);
+        if ((mode & 0xFF) != 0)
+        {
+            // A reverb preset: libsd's tables of the reverb's registers for each aren't here yet
+            Unhandled(c);
+            break;
+        }
+        // The reverb off (mode 0; 0x100 asks for its work area cleared, see 0x8150): its registers stay as sceSdInit left
+        // them, zeros, so only the effect's output volumes, the depths, are set
+        SdSetParam(static_cast<u16>(SD_P_EVOLL | core), c.In16(4));
+        SdSetParam(static_cast<u16>(SD_P_EVOLR | core), c.In16(6));
+        break;
+    }
+    case 0x8150: // sceSdClearEffectWorkArea(core, channel, mode)
+        if ((c.In32(12) & 0xFF) != 0)
+        {
+            Unhandled(c);
+        }
+        // The reverb off's area (a few words at the effects' end address) isn't cleared: with its registers and depths zeros
+        // its output is silent whatever the area holds
+        break;
+    default:
+        Unhandled(c);
+        break;
+    }
+    c.Out32(0, result);
+}
+
 void Cdvd(RpcCall& c)
 {
     switch (c.sid)
@@ -611,6 +680,9 @@ void IopServe(RpcCall& c)
     case 0x8000059A:
     case 0x8000059C:
         Cdvd(c);
+        break;
+    case 0x80000701:
+        Sdr(c);
         break;
     default:
         Unhandled(c);
