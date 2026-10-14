@@ -235,6 +235,11 @@ void Gs::WriteRegister(u32 address, u64 value)
         break;
     case XYOFFSET_1:
     case XYOFFSET_2:
+        // (steadyFields: the half line of field rendering's odd fields dropped, gs.h)
+        if (steadyFields && smode2.interlaced != 0 && smode2.ffmd != 0 && ((value >> 32) & 0xF) == 8)
+        {
+            value -= 8ull << 32;
+        }
         context_[address - XYOFFSET_1].xyoffset.value = value;
         break;
     case PRMODECONT:

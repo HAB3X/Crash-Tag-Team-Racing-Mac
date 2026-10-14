@@ -92,6 +92,9 @@ void GsInit()
     g_hw.vif0 = new Ee::Vif(0, *g_hw.vu0, nullptr);
     g_hw.vif1 = new Ee::Vif(1, *g_hw.vu1, g_hw.gif);
     g_hw.gs->eventHook = GsEvent;
+    // Field rendering's half line dropped, so the picture doesn't shake (hw/gs/gs.h; $PS2_STEADY_FIELDS=0 keeps it, as on a TV)
+    const char* steady = getenv("PS2_STEADY_FIELDS");
+    g_hw.gs->steadyFields = steady == nullptr || strcmp(steady, "0") != 0;
     Ee::Vu* vu1 = g_hw.vu1;
     Ee::Gif* gif = g_hw.gif;
     // $PS2_VU_STEP=ADDR: the first run of the VU1 program at that byte address traced instruction by instruction

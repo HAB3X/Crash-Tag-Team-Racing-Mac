@@ -163,6 +163,11 @@ upscaled on the GPU, a bicubic pass), or `$PS2_GS`, `$PS2_GS_SCALE`, `$PS2_TEXTU
 folder (written with the defaults the first time). The software GS (the PS2's own rules at its resolution) draws when it's asked
 for, when there's no OpenGL 3.3 and with `PS2_RENDER_THREAD=0` (the GPU's context belongs to the render thread).
 
+A game that draws each field of an interlaced picture on its own (SMODE2's INT and FFMD; WoC does) moves its drawing half a
+line on every other field with XYOFFSET (the SDK's sceGsSetHalfOffset), for a TV that shows the fields half a line apart.
+Shown one field after another in the same place, the picture shook by half a line at 30 Hz: the GS drops that half line
+(`Gs::steadyFields`), so both fields are drawn alike. `PS2_STEADY_FIELDS=0` keeps it.
+
 ### The render thread
 
 The GS's side (the GIF's paths, the GS's registers, local memory, drawing and the PCRTC's picture) runs on a thread of its

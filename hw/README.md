@@ -23,6 +23,9 @@ here unchanged except for:
   tables are empty, and the translation follows the `vu.cpp` change below
 - `ee/vu.cpp`: LQI, LQD, SQI and SQD's increments and decrements keep the register's old value for the branch read rule, as
   the integer ALU's writes do (Wrath of Cortex's model program loops forever otherwise)
+- `gs/gs.h` and `gs/gs.cpp`: `Gs::steadyFields`, field rendering's odd fields drawn without their half line (XYOFFSET's OFY
+  half a line past a whole one taken as the whole one while SMODE2 is interlaced and in field mode): shown one field after
+  another on a computer's screen, the half line made the picture shake
 
 - `gs/workers.cpp`: the workers ask macOS for the performance cores (QoS user interactive): rows are shared out evenly, so
   a worker on an efficiency core held every primitive up
