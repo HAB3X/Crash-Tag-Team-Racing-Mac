@@ -54,6 +54,11 @@ typedef struct Ps2GameInfo
     // Optional. The settings folder's name in ~/Library/Application Support (the saves, the options, the disc's path);
     // NULL: "PS2 Native Runtime/<executable>"
     const char* folder;
+    // Optional. Nonzero: the game's own pause menu is kept. The menu key (Escape) is then Start, a gamepad's Back is Select,
+    // and the PC menus have no pause menu of their own: their Options (with an Extras tab for the game's Extras and Pause
+    // actions) open when the game asks (ps2_open_settings, e.g. from a line of its own options menu), and going back from them
+    // goes back to the game
+    int ownPause;
 } Ps2GameInfo;
 
 // A prompt shown over the picture near its bottom (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down;
@@ -106,6 +111,14 @@ extern "C"
 #endif
     void
     ps2_press_buttons(uint32_t buttons, double seconds);
+
+// The PC menus' Options opened over the game (paused under them), for a game with its own pause menu (Ps2GameInfo::ownPause).
+// Any thread
+#ifdef __cplusplus
+extern "C"
+#endif
+    void
+    ps2_open_settings(void);
 
 // Runs the game: parses the options, boots the disc, and returns only when the game ends
 int ps2_main(int argc, char** argv, const Ps2GameInfo* game);

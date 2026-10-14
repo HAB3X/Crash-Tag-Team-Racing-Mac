@@ -44,6 +44,14 @@ int g_promptChoice = 0;
 std::atomic<bool> g_backIsSelect{false};
 std::map<std::string, std::string> g_savedGame;
 
+// The game asked for the Options (ps2_open_settings); the game paused because the window isn't in front (a game with its own
+// pause menu: no menu of the runtime's is up for it)
+std::atomic<bool> g_settingsAsked{false};
+bool g_backgroundPaused = false;
+
+// The game keeps its own pause menu (Ps2GameInfo::ownPause)
+bool OwnPause() { return g_game != nullptr && g_game->ownPause != 0; }
+
 std::string OptionsPath() { return g_options.settingsDir + "/options.txt"; }
 
 std::string GameKey(const Ps2GameSetting& setting) { return std::string(setting.tab) + ": " + setting.name; }
@@ -606,14 +614,18 @@ void BuildOptions()
             SaveOptions();
         },
         {"Automatic", "Keyboard", "PlayStation", "Xbox", "Nintendo Switch"}));
-    controls.rows.push_back(Choice(
-        "Controller's Back button", "A gamepad's Back (Select, View, Share) opens this menu, or is the PS2's Select",
-        [] { return g_backIsSelect ? 1 : 0; },
-        [](int v) {
-            g_backIsSelect = v != 0;
-            SaveOptions();
-        },
-        {"PC menu", "Select"}));
+    // A gamepad's Back is Select when the game keeps its own pause menu
+    if (!OwnPause())
+    {
+        controls.rows.push_back(Choice(
+            "Controller's Back button", "A gamepad's Back (Select, View, Share) opens this menu, or is the PS2's Select",
+            [] { return g_backIsSelect ? 1 : 0; },
+            [](int v) {
+                g_backIsSelect = v != 0;
+                SaveOptions();
+            },
+            {"PC menu", "Select"}));
+    }
     AddGameRows(controls, "Controls");
     Row header;
     header.kind = RowHeader;
@@ -636,6 +648,18 @@ void BuildOptions()
         Page page{tab, {}};
         AddGameRows(page, tab);
         g_pages.push_back(page);
+    }
+
+    // With the game's own pause menu there's no pause menu of the runtime's: its Extras and pause actions are a tab here
+    if (OwnPause())
+    {
+        Page extras{"Extras", {}};
+        AddGameRows(extras, "Pause");
+        AddGameRows(extras, "Extras");
+        if (!extras.rows.empty())
+        {
+            g_pages.push_back(extras);
+        }
     }
 }
 
@@ -788,6 +812,33 @@ void Close()
         SoundPause(false);
         Log("PC menus: the game goes on");
     }
+}
+
+// Back from Options or Extras: to the pause menu, or to the game when it keeps its own
+void BackFromPages()
+{
+    if (OwnPause())
+    {
+        Close();
+    }
+    else
+    {
+        OpenPause();
+    }
+}
+
+// The Options over the game, as the game asked (ps2_open_settings)
+void OpenSettings()
+{
+    if (g_open)
+    {
+        return;
+    }
+    OpenPages(Screen::Options);
+    g_open = true;
+    KernelPause(true);
+    SoundPause(true);
+    Log("PC menus: the game paused (its options)");
 }
 
 // ------------------------------------------------------------------------------------------------------------ the frame's input
@@ -1212,7 +1263,7 @@ void TakePagesInput()
     {
         if (Took(UiBack))
         {
-            OpenPause();
+            BackFromPages();
         }
         return;
     }
@@ -1246,7 +1297,7 @@ void TakePagesInput()
     }
     else if (Took(UiBack))
     {
-        OpenPause();
+        BackFromPages();
     }
 }
 
@@ -1471,7 +1522,7 @@ void MenusGameVblank()
 
 bool MenusOpen() { return g_open; }
 
-bool PadBackIsSelect() { return g_backIsSelect; }
+bool PadBackIsSelect() { return g_backIsSelect || OwnPause(); }
 
 bool MenusEvent(const SDL_Event& e)
 {
@@ -1483,12 +1534,29 @@ bool MenusEvent(const SDL_Event& e)
         ApplyVolume();
         if (g_pauseInBackground && !g_open && !g_options.headless)
         {
-            OpenPause();
+            if (!OwnPause())
+            {
+                OpenPause();
+            }
+            else if (!g_backgroundPaused)
+            {
+                // The game's own pause menu isn't opened for it: the game just waits
+                g_backgroundPaused = true;
+                KernelPause(true);
+                SoundPause(true);
+            }
         }
         return false;
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
         g_focused = true;
         ApplyVolume();
+        if (g_backgroundPaused)
+        {
+            g_backgroundPaused = false;
+            InputIgnoreHeld();
+            KernelPause(false);
+            SoundPause(false);
+        }
         return false;
     case SDL_EVENT_KEY_DOWN:
     {
@@ -1503,7 +1571,7 @@ bool MenusEvent(const SDL_Event& e)
         }
         if (!g_open)
         {
-            if (!e.key.repeat && InputIsMenuKey(e.key.scancode))
+            if (!e.key.repeat && InputIsMenuKey(e.key.scancode) && !OwnPause())
             {
                 OpenPause();
                 return true;
@@ -1570,7 +1638,7 @@ bool MenusEvent(const SDL_Event& e)
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
         if (!g_open)
         {
-            if (InputIsMenuKey(InputMouseKey(e.button.button)))
+            if (InputIsMenuKey(InputMouseKey(e.button.button)) && !OwnPause())
             {
                 OpenPause();
                 return true;
@@ -1624,7 +1692,7 @@ bool MenusEvent(const SDL_Event& e)
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
         if (!g_open)
         {
-            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && !g_backIsSelect)
+            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && !PadBackIsSelect())
             {
                 OpenPause();
                 return true;
@@ -1668,6 +1736,10 @@ void MenusFrame(double gameSeconds)
     if (!g_options.ui.empty())
     {
         PlayScript(gameSeconds);
+    }
+    if (g_settingsAsked.exchange(false))
+    {
+        OpenSettings();
     }
     TakeInput();
 }
@@ -1754,8 +1826,13 @@ std::string PadControlText(PadControl control, PromptStyle style)
     case PadControl::RightTrigger: return ps ? "R2" : sw ? "ZR" : "RT";
     case PadControl::Start: return ps ? "Start" : sw ? "Plus" : "Menu";
     case PadControl::BackAsSelect:
-        return !g_backIsSelect ? "-" : ps ? "Select" : sw ? "Minus" : "View";
+        return !PadBackIsSelect() ? "-" : ps ? "Select" : sw ? "Minus" : "View";
     case PadControl::BackAsMenu:
+        // With the game's own pause menu it's the gamepad's Start
+        if (OwnPause())
+        {
+            return ps ? "Start" : sw ? "Plus" : "Menu";
+        }
         return g_backIsSelect ? "-" : ps ? "Select" : sw ? "Minus" : "View";
     case PadControl::LeftStick: return ps ? "L3" : "LS";
     case PadControl::RightStick: return ps ? "R3" : "RS";
@@ -1775,3 +1852,5 @@ std::string PadControlText(PadControl control, PromptStyle style)
     return "-";
 }
 }
+
+extern "C" void ps2_open_settings(void) { Ps2::Ui::g_settingsAsked = true; }

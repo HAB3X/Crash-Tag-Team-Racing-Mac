@@ -537,6 +537,11 @@ void InputUpdate(double t, SDL_Window* window)
             }
             else if (a.stick == -3)
             {
+                // A game with its own pause menu has the menu key as its Start
+                if (g_game != nullptr && g_game->ownPause != 0)
+                {
+                    pressed |= Start;
+                }
                 continue;
             }
             else
@@ -684,7 +689,16 @@ SDL_Gamepad* InputGamepad() { return g_gamepad; }
 
 int InputActionCount() { return static_cast<int>(g_actions.size()); }
 
-std::string InputActionLabel(int action) { return g_actions[static_cast<size_t>(action)].label; }
+std::string InputActionLabel(int action)
+{
+    const Action& a = g_actions[static_cast<size_t>(action)];
+    // With the game's own pause menu the menu key is its pause, and the gamepad's Back its Select
+    if (a.stick == -3 && g_game != nullptr && g_game->ownPause != 0)
+    {
+        return "Pause";
+    }
+    return a.label;
+}
 
 Ui::PadControl InputActionPad(int action) { return g_actions[static_cast<size_t>(action)].pad; }
 
