@@ -54,8 +54,18 @@ add_library(ps2runtime STATIC
     runtime/src/sound/libsd.cpp
     runtime/src/sound/output.cpp
     runtime/src/sound/spu2.cpp
+    runtime/src/ui/menus.cpp
+    runtime/src/ui/menuview.cpp
+    runtime/src/ui/mouseart.cpp
+    runtime/src/ui/overlay.cpp
+    runtime/src/ui/overlayrender.cpp
 )
-target_include_directories(ps2runtime PUBLIC runtime/include)
+# The PC menus' fonts are built into the program (runtime/fonts)
+set(ps2_fonts ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fonts)
+set_source_files_properties(runtime/src/ui/overlay.cpp PROPERTIES
+    COMPILE_DEFINITIONS "PS2_FONTS_DIR=\"${ps2_fonts}\""
+    OBJECT_DEPENDS "${ps2_fonts}/LuckiestGuy-Regular.ttf;${ps2_fonts}/Fredoka-SemiBold.ttf;${ps2_fonts}/Fredoka-Bold.ttf")
+target_include_directories(ps2runtime PUBLIC runtime/include PRIVATE runtime/src)
 target_link_libraries(ps2runtime PUBLIC ps2hw SDL3::SDL3)
 target_compile_options(ps2runtime PRIVATE -O2 -g -Wall -Wno-unused-function)
 

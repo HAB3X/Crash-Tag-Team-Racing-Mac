@@ -214,15 +214,46 @@ rest. The results are the interpreter's bit for bit: `PS2_VU1=verify` runs both 
 
 Port 0's controller is the keyboard and mouse, and the first gamepad SDL3 finds (`input.cpp`). The keyboard and mouse defaults
 are the Crash Twinsanity native port's PC controls: W A S D move (a stick, diagonals as a stick's), Space is cross, the mouse's
-left button or J square, Left Shift or K circle, Tab or I triangle, Z and C the shoulders, Escape or Return start, Left Ctrl
-toggles walking, Q and E the right stick, and the arrows the d-pad; every one can be changed in the settings folder's
-`bindings.txt` (written with the defaults the first time). A game can take typed text (its `typing` hook): the keyboard then
+left button or J square, Left Shift or K circle, Tab or I triangle, Z and C the shoulders, Return start, Left Ctrl toggles
+walking, Q and E the right stick, and the arrows the d-pad; Escape opens the PC menus (below). Every one can be changed in the
+PC menus' Controls or in the settings folder's `bindings.txt` (written with the defaults the first time). A game can take typed text (its `typing` hook): the keyboard then
 types instead (`ps2_take_typed`), and the game's `vblank` hook puts it in its memory. Presses can be scripted with `--press
 30:start,31:cross` and typing with `--type 41:NAME<enter>` for headless runs. Scripted presses and
 `--snapshot-every`/`--snapshot-at` count the game's time (its vblanks), not the wall clock's, so a script lands on the same
 frames however fast the host draws and loads. The memory cards are folders, `port0` and `port1`, in `--memcards DIR` (by default
 `~/Library/Application Support/PS2 Native Runtime/<executable>/memcards`): port 0's card is always in, port 1's when its folder
 exists. A save is the game's own directory of files, as on the card.
+
+### The PC menus (`runtime/src/ui/`)
+
+The Crash Twinsanity native port's PC menus (its `ui/` there: the overlay, the options screen's look and logic, the prompts,
+the mouse's art), copied with their origin noted in each file and made game-neutral. Escape (any key bound to `menu` in
+bindings.txt) or a gamepad's Back button opens the pause menu: Resume, Options, Extras (when the game has any), the game's own
+pause actions, Quit (a box asks first). Options has tabs: Gameplay (pause in the background), Display (windowed or fullscreen,
+the window's size, the internal resolution 1x-8x, texture filtering, texture upscale, anti-aliasing: FXAA or supersampling 2x
+and 4x, the CRT filter, v-sync; a change of the window asks to be kept, going back after 15 s), Sound (the master volume, mute
+in the background), Controls (the button prompts' style, what a gamepad's Back is, every action of bindings.txt with its two
+keys rebindable by key or mouse button and the gamepad's control shown), then the game's own tabs. A game's settings and actions
+(`ps2/runtime.h`) join the tabs they name. Cmd+F and Alt+Enter switch fullscreen at any time.
+
+- The pause: `KernelPause` stops the thread holding the processor at its next poll point (it waits in the kernel's service,
+  between instructions), and the timer thread makes no vblanks or alarms (`BusCycles`, the game's clock, stands still); when no
+  thread holds the processor the timer thread waits instead. Work for the game's side (`KernelOnGameSide`: a game's setting's
+  `set`, an action's `run`, the GS's settings put in the render thread's queue) is done by whichever of them is waiting, so a
+  change shows at once and the game's code is only ever run where it would be. The sound's output stops with it (the driver's
+  timer is the SPU2's samples). What was held as the menus close counts again only once it's let go.
+- The picture: the window keeps the copy it drew last, which the render thread doesn't copy into, and draws it again under the
+  menus while the game is paused (the presenter turns every few milliseconds then, v-sync pacing it).
+- The overlay is drawn by the presenter over the picture at the window's own resolution, in a 1280 x 720 reference space
+  scaled to fit and centred: rounded boxes as signed distances, the fonts (Luckiest Guy and Fredoka, `runtime/fonts`, built into
+  the program) baked into atlases per size with stb_truetype. The mouse's places are hit regions recorded as each frame is drawn.
+- The settings: the display's in `graphics.txt` (as before, with the new ones added), the rest and the game's own in
+  `options.txt`. `--settings DIR` uses another folder (tests).
+- The game's prompt (`ps2_show_prompt`) is drawn near the picture's bottom in the menus' style while the game plays.
+- `--ui S:KEY,...` drives the menus from a time of the game's: keys (esc, enter, up, down, left, right, tab, prevtab, q, e,
+  back, delete, space), `mouse:XxY`/`click:XxY` in reference pixels, `wheelup`/`wheeldown`, `pad-back`, `wait`, and `shot`,
+  which saves the window with the menus as `uiNN.png` in the snapshots' folder (the window's pixels; headless, a hidden
+  1280 x 960 window's, with nothing animating). One key a third of a second, by the clock while the game is paused.
 
 ### Debugging
 

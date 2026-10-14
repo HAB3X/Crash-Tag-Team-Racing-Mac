@@ -24,9 +24,15 @@ struct DisplayImage;
 union SDL_Event;
 struct SDL_Window;
 struct SDL_FRect;
+struct SDL_Gamepad;
 
 namespace Ps2
 {
+namespace Ui
+{
+enum class PadControl : int;
+}
+
 // The calling thread kept on the performance cores (macOS puts busy threads of the default class on the efficiency cores too)
 inline void ThreadOnPerformanceCores()
 {
@@ -109,6 +115,12 @@ u64 BusCycles();
 bool InInterrupt();
 // COP0 Status's EIE: EI and DI
 bool InterruptsEnabled();
+// The PC menus' pause: the game stops at its next poll point (and the timer makes no vblanks or alarms; its time stands still)
+// until it's let go
+void KernelPause(bool paused);
+// Work done on the game's side between its instructions (by the thread holding the processor, or the timer thread when none
+// does), paused or not: a setting of the game's changed, an action of the game's, the GS's settings (RenderCall) changed
+void KernelOnGameSide(std::function<void()> work);
 
 // --- io.cpp
 void IoInit();
@@ -150,7 +162,7 @@ struct Options
     double watchEvery = 1;
     // The game's frames and the vblanks of every second to the log
     bool fps = false;
-    // The memory cards' folders (port0, port1 in it), and the settings' (bindings.txt)
+    // The memory cards' folders (port0, port1 in it), and the settings' (bindings.txt, graphics.txt, options.txt; --settings)
     std::string memcardDir;
     std::string settingsDir;
     // Buttons pressed at given times (seconds of game time): port 0's PS2 button bits, held for a while
@@ -180,6 +192,9 @@ struct Options
     // The sound: everything the SPU2 makes written to a WAV file; no audio device (the sound is made all the same)
     std::string audioDump;
     bool mute = false;
+    // The PC menus driven by a script (--ui): from a time of the game's, keys pressed one after another and the window's
+    // pictures with the menus saved in the snapshots' folder (ui/menus.cpp)
+    std::vector<std::pair<double, std::string>> ui;
 };
 extern Options g_options;
 
@@ -206,9 +221,33 @@ bool DisplayOnGpu();
 int DisplayCopyShown();
 void DisplayDropShown();
 bool DisplayReadShown(Gs::DisplayImage& image);
-// On the main thread: the newest copy (or the pixels given) drawn over the window; where the picture is, in the window's points
-void DisplayPresent(const Gs::DisplayImage* image, ::SDL_FRect* pictureRect);
+// On the main thread: the newest copy (or the pixels given) drawn over the window with the PC menus' overlay over it, or (redraw)
+// the last one drawn again; where the picture is, in the window's points
+void DisplayPresent(const Gs::DisplayImage* image, bool redraw, ::SDL_FRect* pictureRect);
+// The window's picture with the PC menus over it saved as a PNG (headless: drawn in the hidden window's context)
+bool DisplayShot(const std::string& path, const Gs::DisplayImage* image);
 void DisplayClose();
+// The display settings of the PC menus' Display tab (graphics.txt): set applies (the GS's on its side) and saves them. The
+// window's size is a choice of DisplayWindowSizeCount (-1: a size of its own), the texture upscale 0-2 (off, 2x, 4x)
+enum class DisplaySetting
+{
+    Fullscreen,
+    WindowSize,
+    Scale,
+    TextureUpscale,
+    Filtering,
+    AntiAliasing,
+    Crt,
+    VSync,
+    OnGpu,
+};
+int DisplayGet(DisplaySetting setting);
+void DisplaySet(DisplaySetting setting, int value);
+std::string DisplayWindowSizeText(int choice);
+int DisplayWindowSizeCount();
+// The window's size in points as it is, and put back (the menus' countdown going back)
+void DisplayWindowPoints(int* width, int* height);
+void DisplaySetWindowPoints(int width, int height);
 
 // --- input.cpp: port 0's controller from the keyboard, a gamepad and --press
 u32 ButtonsFromNames(const std::string& names);
@@ -219,6 +258,27 @@ void InputInit();
 void InputPicture(float x, float y, float w, float h);
 void InputEvent(const ::SDL_Event& e);
 void InputUpdate(double seconds, ::SDL_Window* window);
+// For the PC menus: what's held now counted only once it's let go; the device used last (for the prompts); the gamepad
+void InputIgnoreHeld();
+void InputNoteDevice(const ::SDL_Event& e);
+bool InputLastKeyboard();
+::SDL_Gamepad* InputGamepad();
+// The actions of bindings.txt (the Controls table's rows): a label, the gamepad's control, the keys in their slots (-1 none)
+int InputActionCount();
+std::string InputActionLabel(int action);
+Ui::PadControl InputActionPad(int action);
+int InputActionKey(int action, int slot);
+std::string InputKeyName(int key);
+// A mouse button as a key (-1: none bindable)
+int InputMouseKey(int button);
+// A key put in an action's slot, taken from where it was (that slot given the old key: the action it swapped with, or -1);
+// a slot cleared; the defaults; each saved to bindings.txt
+int InputBindKey(int action, int slot, int key);
+void InputClearKey(int action, int slot);
+void InputResetKeys();
+bool InputIsMenuKey(int key);
+// The game's prompt (ps2_show_prompt; empty: none)
+std::string InputPrompt();
 
 // --- disc.cpp
 bool DiscOpen(const std::string& path);
@@ -243,6 +303,10 @@ u8* IopMem();
 void SoundInit();
 // The WAV file finished
 void SoundStop();
+// The PC menus' pause: nothing made meanwhile (the driver's timer stands still with the SPU2); the output's gain (0-1: the
+// master volume, 0 when muted; the WAV file keeps what's made)
+void SoundPause(bool paused);
+void SoundSetGain(float gain);
 
 // --- iop/padman.cpp
 // The pads' frames, rewritten at each vertical blank (the IOP's PADMAN does it then)

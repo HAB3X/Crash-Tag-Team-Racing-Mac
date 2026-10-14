@@ -3,7 +3,11 @@
 
 #include <stdint.h>
 
-// A game's own setting in the runtime's PC menus (the pause menu's Options and Extras): a row with choices
+// A game's own setting in the runtime's PC menus (the pause menu's Options and Extras): a row with choices. Its tab: "Gameplay",
+// "Display", "Sound" or "Controls" put it on the runtime's own tab of that name (after the runtime's rows), "Extras" on the
+// Extras screen (the pause menu has Extras when the game has any), any other name a tab of its own after the runtime's. The
+// choice made is saved in the settings folder's options.txt (by its tab, name and choice's label) and set again at the game's
+// first vertical blank of each run
 typedef struct Ps2GameSetting
 {
     const char* tab;              // the Options tab it's on ("Gameplay", "Sound", "Extras"...)
@@ -13,7 +17,9 @@ typedef struct Ps2GameSetting
     void (*set)(int choice);      // a choice made (called on the game's side, between its instructions; saved by the runtime)
 } Ps2GameSetting;
 
-// A game's own action in the PC menus (a button: e.g. a level of the level select)
+// A game's own action in the PC menus (a button: e.g. a level of the level select). Its tab as a setting's; "Pause" makes it an
+// item of the pause menu itself, before Quit (e.g. "Quit to title"). A group's heading is shown over each run of actions in it.
+// An action not available now is shown greyed
 typedef struct Ps2GameAction
 {
     const char* tab;              // the tab ("Extras")
@@ -50,14 +56,16 @@ typedef struct Ps2GameInfo
     const char* folder;
 } Ps2GameInfo;
 
-// A prompt shown over the picture (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down. Any thread
+// A prompt shown over the picture near its bottom (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down;
+// not shown while the PC menus are up. Any thread
 #ifdef __cplusplus
 extern "C"
 #endif
     void
     ps2_show_prompt(const char* text);
 
-// Whether the PC menus are up (the game is paused under them)
+// Whether the PC menus are up (the game is paused under them: its code stops at its next poll point, its time and sound stand
+// still)
 #ifdef __cplusplus
 extern "C"
 #endif

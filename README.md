@@ -18,6 +18,8 @@ This is a work in progress and it still has bugs.
   SPU2, the sound processor (from the Crash Twinsanity native port), played through SDL3
 * `hw/`: the GS (drawn on the GPU with OpenGL, or in software), GIF, VIF and VU emulation from the Crash Twinsanity native port
   (see `hw/README.md`)
+* `runtime/src/ui/`: the PC menus over the game (pause, options with display, sound and controls settings, a game's own
+  settings and extras), from the Crash Twinsanity native port, with its fonts (`runtime/fonts`)
 * `tools/`: reading files from a disc image, disassemblers for the R5900 and the VUs
 
 [DESIGN.md](DESIGN.md) has how it all works.
@@ -34,7 +36,8 @@ CMake, Ninja, Python 3 and SDL3.
 
 ## Credits
 
-The graphics hardware comes from the Crash Twinsanity native port. The PS2 hardware documentation and the work of the PCSX2 and
+The graphics hardware and the PC menus come from the Crash Twinsanity native port. The menus' fonts are Luckiest Guy (Apache
+License 2.0) and Fredoka (SIL Open Font License), read with stb_truetype (public domain). The PS2 hardware documentation and the work of the PCSX2 and
 PS2SDK projects made this possible.
 
 You need your own copy of each game: nothing of any game is in this repository.
