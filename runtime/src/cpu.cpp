@@ -45,7 +45,13 @@ extern "C" void ps2_call(Ps2Cpu* c, u32 address)
 extern "C" void ps2_break(Ps2Cpu* c, u32 pc)
 {
     (void)c;
-    Log("break at %08x", pc);
+    // A game's assert or its debugger stop: the program goes on, as it would with no debugger to stop it. Logged the first
+    // time with where it was called from (a timeout's report may break on every turn of its loop)
+    if (Once("break " + std::to_string(pc)))
+    {
+        Log("break at %08x (logged once)", pc);
+        Backtrace();
+    }
 }
 
 namespace
