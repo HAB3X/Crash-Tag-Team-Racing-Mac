@@ -21,10 +21,8 @@ void Usage(const char* program)
             "usage: %s --disc IMAGE [--headless] [--snapshots DIR] [--snapshot-every S] [--snapshot-at S,S,...]\n"
             "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq]\n"
             "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--press S:BUTTON[+BUTTON][:HOLD],...]\n"
-            "          [--type S:TEXT] [--click S:X,Y]
-"
-            "          [--fps] [--gs hardware|software] [--scale 1-8] [--texture-upscale 0|2|4]
-",
+            "          [--type S:TEXT] [--click S:X,Y]\n"
+            "          [--fps] [--gs hardware|software] [--scale 1-8] [--texture-upscale 0|2|4]\n",
             program);
 }
 
