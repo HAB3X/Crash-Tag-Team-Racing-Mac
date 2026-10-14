@@ -4,8 +4,9 @@ A runtime and a static recompiler for running PlayStation 2 games natively on Ma
 recompiled to C ahead of time, and the runtime stands in for the rest of the console: memory, the kernel, the DMA controller, the
 IOP, and the graphics hardware.
 
-Each game is its own repository that builds against this one. The first is
-[Crash Bandicoot: The Wrath of Cortex](../crash-woc-mac).
+A game's repository builds against this one. The first is
+[Crash Bandicoot: The Wrath of Cortex for Mac](https://github.com/HAB3X/Crash-Wrath-of-Cortex-Mac), which carries it in its
+`ps2-native-runtime/` folder.
 
 This is a work in progress and it still has bugs.
 
@@ -18,8 +19,8 @@ This is a work in progress and it still has bugs.
   SPU2, the sound processor (from the Crash Twinsanity native port), played through SDL3
 * `hw/`: the GS (drawn on the GPU with OpenGL, or in software), GIF, VIF and VU emulation from the Crash Twinsanity native port
   (see `hw/README.md`)
-* `runtime/src/ui/`: the PC menus over the game (pause, options with display, sound and controls settings, a game's own
-  settings and extras), from the Crash Twinsanity native port, with its fonts (`runtime/fonts`)
+* `runtime/src/ui/`: the PC menus over the game (pause, or a game's own pause menu kept; options with display, sound and
+  controls settings, a game's own settings and extras), from the Crash Twinsanity native port, with its fonts (`runtime/fonts`)
 * `tools/`: reading files from a disc image, disassemblers for the R5900 and the VUs
 
 [DESIGN.md](DESIGN.md) has how it all works.
