@@ -317,6 +317,7 @@ enum ProgramBits : u32
     BitFrame24 = 1u << 21,
     BitWrapAdd = 1u << 22,
     BitNativeDepth = 1u << 23,
+    BitNativeTexel = 1u << 24,
 };
 
 constexpr const char* VertexSource = R"(#version 330 core
@@ -429,7 +430,7 @@ void main()
 #else
     vec2 uv = vStq.xy / vStq.z * texSize;
 #endif
-#if NATIVEDEPTH
+#if NATIVEDEPTH || NATIVETEXEL
     // (and the texture read where the GS reads it: the block's first sample's coordinates)
     {
         ivec2 block = ivec2(floor(gl_FragCoord.xy / float(targetScale))) * targetScale;
@@ -1552,6 +1553,7 @@ const Program& HwGs::ProgramFor(u32 bits)
     define("FRAME24", (bits & BitFrame24) ? 1 : 0);
     define("WRAPADD", (bits & BitWrapAdd) ? 1 : 0);
     define("NATIVEDEPTH", (bits & BitNativeDepth) ? 1 : 0);
+    define("NATIVETEXEL", (bits & BitNativeTexel) ? 1 : 0);
     GLuint vertex = CompileShader(GL_VERTEX_SHADER, VertexSource);
     GLuint fragment = CompileShader(GL_FRAGMENT_SHADER, header + FragmentSource);
     Gl& gl = GetGl();
@@ -4457,6 +4459,14 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         key.zMax = static_cast<f32>(state.zmax);
     }
 
+    // A texture at the PS2's resolution made from upscaled buffers, unfiltered, drawn into an upscaled target: every sample
+    // reads the texel its block's first sample (the GS's sample point) reads. An effect reading a buffer as other texels (its
+    // depth as 8 bit indexes, say) steps through them a texel a pixel; the samples between would read other pixels' bytes
+    if (textureFromScaled && n > 1 && key.magFilter == GL_NEAREST && key.minFilter == GL_NEAREST)
+    {
+        program |= BitNativeTexel;
+    }
+
     if (state.alphaTest && state.atst != Gs::AtstAlways)
     {
         program |= BitAlphaTest | (state.atst << BitAtstShift);
@@ -4587,6 +4597,30 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
                 corners[i].s = xs.s;
                 corners[i].t = ys.t;
                 corners[i].q = b.q;
+            }
+        }
+
+        if (program & BitNativeTexel)
+        {
+            // Covering the GS's pixels' whole blocks: an edge between two samples of a block (a sprite 1.5 pixels high) would
+            // leave the block's samples past it as they were, a line of them in every such block. The texture coordinates
+            // carried along their planes
+            auto along = [](f32 from, f32 to, f32 valueFrom, f32 valueTo, f32 at) {
+                return from == to ? valueFrom : valueFrom + (valueTo - valueFrom) * (at - from) / (to - from);
+            };
+            const f32 xa = corners[0].x, xb = corners[1].x, ya = corners[0].y, yb = corners[2].y;
+            const f32 left = static_cast<f32>(rect.left * n), right = static_cast<f32>((rect.right + 1) * n);
+            const f32 top = static_cast<f32>(rect.top * n), bottom = static_cast<f32>((rect.bottom + 1) * n);
+            const f32 toXa = xa <= xb ? left : right, toXb = xa <= xb ? right : left;
+            const f32 toYa = ya <= yb ? top : bottom, toYb = ya <= yb ? bottom : top;
+            const f32 sa = along(xa, xb, corners[0].s, corners[1].s, toXa), sb = along(xa, xb, corners[0].s, corners[1].s, toXb);
+            const f32 ta = along(ya, yb, corners[0].t, corners[2].t, toYa), tb = along(ya, yb, corners[0].t, corners[2].t, toYb);
+            for (u32 i = 0; i < 4; i++)
+            {
+                corners[i].x = (i & 1) ? toXb : toXa;
+                corners[i].s = (i & 1) ? sb : sa;
+                corners[i].y = (i & 2) ? toYb : toYa;
+                corners[i].t = (i & 2) ? tb : ta;
             }
         }
 
@@ -4908,6 +4942,9 @@ void HwGs::Flush()
             gl.ActiveTexture(GL_TEXTURE0);
             gl.Uniform1i(p.depthCopy, 4);
             gl.Uniform1i(p.nativeZtst, static_cast<GLint>(k.nativeDepthTest));
+        }
+        if (k.program & (BitNativeDepth | BitNativeTexel))
+        {
             gl.Uniform1i(p.targetScale, static_cast<GLint>(n));
         }
         gl.Uniform1f(p.pointSize, static_cast<f32>(n));
