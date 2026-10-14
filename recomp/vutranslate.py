@@ -31,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from elf import Elf  # noqa: E402
-from vudecode import decode, imm11, FLAG_CLIP  # noqa: E402
+from vudecode import decode, imm11, FLAG_CLIP, FLAG_STATUS  # noqa: E402
 
 CODE_MASK = 0x7FF
 VU0 = False
@@ -117,7 +117,7 @@ def read_programs(elf_path):
 
 # What the translation handles (anything else: the block stops before it and the interpreter runs it)
 UNSUPPORTED_LOWER = {'unknown', 'esadd', 'ersadd', 'eleng', 'erleng', 'eatanxy', 'eatanxz', 'esum', 'ercpr', 'esqrt',
-                     'ersqrt', 'esin', 'eatan', 'eexp', 'waitp', 'mfp', 'fsset', 'fcset', 'fseq', 'fsor'}
+                     'ersqrt', 'esin', 'eatan', 'eexp', 'waitp', 'mfp', 'fcset', 'fseq', 'fsor'}
 ARITH_UPPERS = {'arith', 'opmula', 'opmsub'}
 
 
@@ -130,8 +130,9 @@ def supported(d):
         return False
     if d.lower == 'fsand':
         imm12 = ((d.lower_word >> 21) & 1) << 11 | (d.lower_word & 0x7FF)
-        # The sticky bits (6-11) of the visible status flag aren't kept as the interpreter sees them mid-run
-        if imm12 & ~0x3F:
+        # The division's sticky bits (10 and 11) of the visible status flag aren't kept as the interpreter sees them mid-run;
+        # the others are where Sim.ready_for says
+        if imm12 & 0xC00:
             return False
     return True
 
@@ -185,7 +186,7 @@ class Translator:
             return self.variant_ids[key]
         if sum(1 for o, _ in self.variants if o == offset) >= MAX_VARIANTS:
             return None
-        if not supported(self.ins[offset]) or self.block_end(offset) is None:
+        if not supported(self.ins[offset]) or self.block_end(offset) is None or not Sim(self, sig).ready_for(self.ins[offset]):
             return None
         vid = len(self.variants)
         self.variants.append(key)
@@ -228,6 +229,12 @@ class Translator:
         out.append('{')
         sim = Sim(self, sig)
         last, kind = self.block_end(offset)
+        # An instruction the state it's reached with can't be translated for (Sim.ready_for) ends the block before it; a
+        # branch's delay slot isn't one (block_end keeps them simple)
+        for o in range(offset + 1, last + 1):
+            if not (kind == 'branch' and o == last) and not self.ready_at(sig, offset, o):
+                last, kind = o - 1, 'stop'
+                break
         count = last - offset + 1
         self.max_used = max(self.max_used, last)
         out.append('    count += %d;' % count)
@@ -261,6 +268,16 @@ class Translator:
             # The program's end, or an instruction the translation leaves to the interpreter
             self.go(out, last + 1, exit_sig, sim, '    ')
         out.append('}')
+
+    def ready_at(self, sig, offset, at):
+        """Whether the instruction at `at` can be translated in the state the block from offset reaches it with."""
+        if self.ins[at].lower not in ('fsset', 'fsand'):
+            return True
+        sim = Sim(self, sig)
+        scratch = []
+        for o in range(offset, at):
+            sim.step(o, self.ins[o], scratch)
+        return sim.ready_for(self.ins[at])
 
     def go(self, out, target, sig, sim, indent):
         if 0 <= target < self.size:
@@ -313,6 +330,9 @@ class Sim:
         self.backup_cycles, self.backup_reg = backup
         self.bk_val = 'bk_val'
         self.any_entry = any_entry
+        # Whether the visible MAC flag's status bits are in the visible status flag's sticky bits: they are once an
+        # arithmetic result lands (each lands into them), not once FSSET's lands (it sets them); unknown at a block's start
+        self.vis_mac_counted = False
         # Lanes known to hold VU-clean floats (what Clamp would leave alone), per register (32: ACC)
         self.clean = {0: 0xF}
 
@@ -365,10 +385,36 @@ class Sim:
             if e.flags & FLAG_CLIP:
                 self.vis_clip = e.clip
             self.vis_mac = e.mac
+            self.vis_mac_counted = not (e.flags & FLAG_STATUS)
         if self.fdiv is not None and cycle >= self.fdiv[0]:
             self.q = self.fdiv[1]
             self.vis_div = self.fdiv[2]
             self.fdiv = None
+
+    def ready_for(self, d):
+        """Whether the instruction can be translated in this state (its stalls and what lands before it worked out on a copy).
+
+        The translation keeps the status flag's sticky bits as every result issued so far (sticky_bits, sticky); the
+        interpreter's visible flag has those that have landed. FSAND reading them is translated when they're the same: no
+        FSSET in flight, and every result in flight one whose bits are already in. FSSET is translated when no division is
+        in flight (its status, which sets the division's sticky bits when it lands, was taken before FSSET's)."""
+        if d.ibit or d.lower not in ('fsset', 'fsand'):
+            return True
+        probe = Sim.__new__(Sim)
+        probe.__dict__ = dict(self.__dict__)
+        probe.entries = list(self.entries)
+        probe.ialu = list(self.ialu)
+        probe.fmac_stall(d.lower_read0, d.lower_read0_mask)
+        probe.fmac_stall(d.lower_read1, d.lower_read1_mask)
+        probe.fmac_stall(d.upper_read0, d.upper_read0_mask)
+        probe.fmac_stall(d.upper_read1, d.upper_read1_mask)
+        probe.flush(probe.cycle)
+        if d.lower == 'fsset':
+            return probe.fdiv is None
+        imm12 = ((d.lower_word >> 21) & 1) << 11 | (d.lower_word & 0x7FF)
+        if not imm12 & 0x3C0:
+            return True
+        return all(not (e.flags & FLAG_STATUS) and e.mac == probe.vis_mac and probe.vis_mac_counted for e in probe.entries)
 
     # ---- operands
     def clean_lanes(self, reg):
@@ -487,11 +533,14 @@ class Sim:
 
         # The FMAC pipeline's entry
         if upper_fmac or lower_fmac:
-            if not self.any_entry and not mac_changed:
-                # The run's first entry carries the starting status: its bits go into the sticky ones
+            sets_status = lower_fmac and d.lower == 'fsset'
+            if not self.any_entry and not mac_changed and not sets_status:
+                # The run's first entry (or the first since FSSET) carries the MAC flag it started with: its bits go into the
+                # sticky ones
                 out.append('    sticky_bits |= StatusLow(MacOf(%s));' % self.pmac)
-            self.any_entry = True
-            flags = FLAG_CLIP if d.upper == 'clip' else 0
+            # After FSSET's, the next entry's bits are the first in its sticky bits (vu.cpp: anyEntry)
+            self.any_entry = not sets_status
+            flags = (FLAG_CLIP if d.upper == 'clip' else 0) | (FLAG_STATUS if sets_status else 0)
             entry = Entry(self.cycle,
                           d.upper_write_vf if upper_fmac else 0, d.upper_write_mask if upper_fmac else 0,
                           d.lower_write_vf if lower_fmac else 0, d.lower_write_mask if lower_fmac else 0,
@@ -684,7 +733,18 @@ class Sim:
             self.write_vi(it, '%s & 0xFFF' % self.vis_clip, out)
         elif op == 'fsand':
             imm12 = ((lw >> 21) & 1) << 11 | (lw & 0x7FF)
-            self.write_vi(it, '(StatusLow(MacOf(%s)) | %s) & %#x' % (self.vis_mac, self.vis_div, imm12), out)
+            if imm12 & 0x3C0:
+                self.write_vi(it, '(StatusLow(MacOf(%s)) | %s | ((sticky_bits | StickyLow(sticky)) << 6)) & %#x' %
+                              (self.vis_mac, self.vis_div, imm12), out)
+            else:
+                self.write_vi(it, '(StatusLow(MacOf(%s)) | %s) & %#x' % (self.vis_mac, self.vis_div, imm12), out)
+        elif op == 'fsset':
+            imm12 = ((lw >> 21) & 1) << 11 | (lw & 0x7FF)
+            # The sticky bits from here are FSSET's and the results' after it (those before land before it, and it sets
+            # them); the status the interpreter's pipeline entries carry (st.startStatus, LeaveTranslation) gets its bits too
+            out.append('    sticky = Sticky{};')
+            out.append('    sticky_bits = %#x;' % ((imm12 >> 6) & 0xF))
+            out.append('    st.startStatus = (st.startStatus & 0x3Fu) | %#xu;' % (imm12 & 0xFC0))
         elif op == 'fmeq':
             self.write_vi(it, '(MacOf(%s) & 0xFFFF) == %s ? 1 : 0' % (self.vis_mac, vi(is_)), out)
         elif op == 'fmand':

@@ -143,6 +143,12 @@ public:
             }
 
             previousMac = e.mac;
+            // FSSET's entry in flight: the translations reset the sticky bits when they issue it (vutranslate.py)
+            constexpr u32 FlagStatus = 2;
+            if (e.flags & FlagStatus)
+            {
+                return Miss(program, offset, 3);
+            }
         }
 
         if (pipes.fdiv)

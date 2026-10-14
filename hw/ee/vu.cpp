@@ -2036,6 +2036,7 @@ bool Vu::StepMicro(VuMicroState& state)
                 break;
             case Lower::Fsset:
                 pending.status = (imm12 & 0xFC0) | (pending.status & 0x3F);
+                state.startStatus = (imm12 & 0xFC0) | (state.startStatus & 0x3F);
                 lowerFlags = FlagStatus;
                 break;
             case Lower::Fmeq:
@@ -2408,7 +2409,8 @@ bool Vu::StepMicro(VuMicroState& state)
             e.status = pending.status;
             e.clip = pending.clip;
             pipes.fmacCount++;
-            state.anyEntry = true;
+            // FSSET's entry sets the sticky bits when it lands: the next entry's are the first in them again
+            state.anyEntry = (e.flags & FlagStatus) == 0;
         }
 
         // Branches go after their delay slot; the E bit ends the program after its own
