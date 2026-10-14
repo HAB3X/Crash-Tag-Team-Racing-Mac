@@ -33,5 +33,21 @@ here unchanged except for:
   `TWIN_HW_EXACT_FEEDBACK=1` copies for each primitive again
 - `gs/workers.cpp`: the workers ask macOS for the performance cores (QoS user interactive): rows are shared out evenly, so
   a worker on an efficiency core held every primitive up
+- `hw/hwgs.cpp`, for Wrath of Cortex's depth-of-field effect in its levels (stripes across the far scenery, 11 frames a
+  second): texel coordinates nudged a 256th of a texel off the edges the GPU's interpolation falls short of; unfiltered
+  textures decoded from upscaled targets read at the GS's sample point by every sample, their sprites covering whole
+  blocks (`BitNativeTexel`), and left unfiltered by the filtering setting; no second pass for an alpha test whose AFAIL
+  writes all a pass writes; big textures over pages memory's copy has from a target decoded whole; a draw reading its own
+  target as other texels reads the decode made when its batch began (`readsBatchStart_`); a decoded texture's region walked
+  for its pages only when the whole texture has upscaled pages (`LevelPages`); a transfer into pages the GPU holds newer
+  merged into memory's copy on the GPU (`BeforeCpuWriteRect`, `MergeWrites`) and a CPU read of a rectangle the CPU wrote
+  there since not read back (`BeforeCpuReadRect`), targets loading the merged pages together, and textures there found by
+  their content (`CpuWroteLevels`)
+- `gs/backend.h`, `gs/gs.cpp`: `Backend::BeforeCpuWriteRect` and `BeforeCpuReadRect` (the rectangle a transfer writes or a
+  read reads); a CLUT's load prepares only the pixels it reads
+- `hw/gl.*`: `Uniform4i`
+- `ee/vu.*`, `ee/vu1translate.cpp`, `recomp/vutranslate.py`: VU1's FSSET translated, and FSAND of the sticky status bits
+  where the translation's are the interpreter's (`startStatus` carries FSSET's bits, `anyEntry` is an entry since the
+  start or FSSET; the dispatcher doesn't enter with FSSET in flight)
 
 Fixes made in either place should be copied to the other.
