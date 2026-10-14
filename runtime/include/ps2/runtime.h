@@ -3,6 +3,26 @@
 
 #include <stdint.h>
 
+// A game's own setting in the runtime's PC menus (the pause menu's Options and Extras): a row with choices
+typedef struct Ps2GameSetting
+{
+    const char* tab;              // the Options tab it's on ("Gameplay", "Sound", "Extras"...)
+    const char* name;             // its label
+    const char* const* choices;   // the choices' labels, ending with NULL ("Off", "On", NULL)
+    int (*get)(void);             // the choice now (asked on the presenter's thread: reading the game's memory is fine)
+    void (*set)(int choice);      // a choice made (called on the game's side, between its instructions; saved by the runtime)
+} Ps2GameSetting;
+
+// A game's own action in the PC menus (a button: e.g. a level of the level select)
+typedef struct Ps2GameAction
+{
+    const char* tab;              // the tab ("Extras")
+    const char* group;            // a heading over a group of actions (NULL: none)
+    const char* name;             // its label
+    int (*available)(void);       // whether it can be chosen now (NULL: always)
+    void (*run)(void);            // chosen: called on the game's side, between its instructions, with the menu closed
+} Ps2GameAction;
+
 typedef struct Ps2GameInfo
 {
     const char* title;
@@ -20,7 +40,33 @@ typedef struct Ps2GameInfo
     // Optional. Whether a menu is up: Return is then cross (confirm) and Backspace triangle (back), and the mouse's left
     // button clicks (ps2_take_click) instead of pressing its bound button
     int (*menu)(void);
+    // Optional. The game's own settings and actions in the runtime's PC menus
+    const Ps2GameSetting* settings;
+    int settingCount;
+    const Ps2GameAction* actions;
+    int actionCount;
 } Ps2GameInfo;
+
+// A prompt shown over the picture (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down. Any thread
+#ifdef __cplusplus
+extern "C"
+#endif
+    void
+    ps2_show_prompt(const char* text);
+
+// Whether the PC menus are up (the game is paused under them)
+#ifdef __cplusplus
+extern "C"
+#endif
+    int
+    ps2_menus_open(void);
+
+// Whether any button, key or mouse button of the player's is held now (for "hold any button to skip")
+#ifdef __cplusplus
+extern "C"
+#endif
+    int
+    ps2_any_input_held(void);
 
 // The mouse over the picture: where it is (0-1 across and down the PS2's picture; false when it's outside it or hasn't moved
 // since the last ask), and its left button's clicks, taken one at a time (where, the same way)
