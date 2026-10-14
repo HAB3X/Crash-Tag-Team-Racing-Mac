@@ -1275,8 +1275,9 @@ private:
     BatchKey key_ = {};
     bool batching_ = false;
     std::vector<HwVertex> vertexes_;
-    // A batch blended by the shader: its primitives' rectangles (one overlapping an earlier one starts a new batch, as the
-    // destination copy is from before the batch)
+    // A batch blended by the shader or drawn in two passes (a failed alpha test's AFAIL): its primitives' rectangles. One
+    // overlapping an earlier one starts a new batch: the destination copy is from before the batch, and the second pass draws
+    // the earlier primitive's failing pixels after the later one's passing pixels, where the GS draws them first
     std::vector<Rect> batchRects_;
     // Stencil buffers for the destination alpha test of draws without a depth buffer, by colour target
     std::map<Target*, std::unique_ptr<Target>> scratchStencils_;
@@ -4481,7 +4482,9 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         Flush();
     }
 
-    if (batching_ && shaderBlend)
+    const bool twoPasses = key.alphaTested != 0 && state.atst != Gs::AtstNever && state.afail != Gs::AfailKeep;
+    const bool ordered = shaderBlend || twoPasses;
+    if (batching_ && ordered)
     {
         for (const Rect& earlier : batchRects_)
         {
@@ -4514,7 +4517,7 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
 
     key_ = key;
     batching_ = true;
-    if (shaderBlend)
+    if (ordered)
     {
         batchRects_.push_back(rect);
     }
