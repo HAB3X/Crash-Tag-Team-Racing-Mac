@@ -4,6 +4,7 @@
 
 #include "../../hw/ee/gif.h"
 #include "../../hw/ee/vif.h"
+#include "../../hw/ee/vu.h"
 
 #include <mutex>
 
@@ -336,6 +337,35 @@ using namespace Ps2;
 
 static bool IsGsPriv(u32 a) { return a >= 0x12000000 && a < 0x12002000; }
 
+// The VUs' memories as the EE sees them: VU0's micro memory at 0x11000000 and data at 0x11004000 (4 KB each), VU1's at
+// 0x11008000 and 0x1100C000 (16 KB each). A write into micro memory goes in through the VU, which keeps its decoded program
+static bool IsVuMemory(u32 a) { return a >= 0x11000000 && a < 0x11010000; }
+
+static u32 VuMemoryRead32(u32 a)
+{
+    Ee::Vu& vu = *(a < 0x11008000 ? Hw().vu0 : Hw().vu1);
+    bool code = (a & 0x4000) == 0;
+    u32 offset = a & (code ? vu.codeSize() * 8 - 1 : vu.dataSize() - 1);
+    u32 v;
+    std::memcpy(&v, code ? reinterpret_cast<const u8*>(vu.code()) + offset : vu.data() + offset, 4);
+    return v;
+}
+
+static void VuMemoryWrite32(u32 a, u32 v)
+{
+    Ee::Vu& vu = *(a < 0x11008000 ? Hw().vu0 : Hw().vu1);
+    if ((a & 0x4000) != 0)
+    {
+        std::memcpy(vu.data() + (a & (vu.dataSize() - 1)), &v, 4);
+        return;
+    }
+    u32 offset = a & (vu.codeSize() * 8 - 1);
+    u8 instruction[8];
+    std::memcpy(instruction, reinterpret_cast<const u8*>(vu.code()) + (offset & ~7u), 8);
+    std::memcpy(instruction + (offset & 4), &v, 4);
+    vu.WriteCode(offset / 8, instruction, 1);
+}
+
 extern "C" u8 ps2_io_read8(u32 a)
 {
     return static_cast<u8>(ps2_io_read32(a & ~3u) >> ((a & 3) * 8));
@@ -351,6 +381,10 @@ extern "C" u32 ps2_io_read32(u32 a)
     {
         return static_cast<u32>(GsPrivRead(a & ~7u) >> ((a & 4) * 8));
     }
+    if (IsVuMemory(a))
+    {
+        return VuMemoryRead32(a);
+    }
     return Read32Io(a);
 }
 extern "C" u64 ps2_io_read64(u32 a)
@@ -360,7 +394,7 @@ extern "C" u64 ps2_io_read64(u32 a)
     {
         return GsPrivRead(a);
     }
-    return Read32Io(a) | (static_cast<u64>(Read32Io(a + 4)) << 32);
+    return ps2_io_read32(a) | (static_cast<u64>(ps2_io_read32(a + 4)) << 32);
 }
 extern "C" u128 ps2_io_read128(u32 a)
 {
@@ -395,6 +429,11 @@ extern "C" void ps2_io_write32(u32 a, u32 v)
         GsPrivWrite(a & ~7u, (old & ~(0xFFFFFFFFull << shift)) | (static_cast<u64>(v) << shift));
         return;
     }
+    if (IsVuMemory(a))
+    {
+        VuMemoryWrite32(a, v);
+        return;
+    }
     Write32Io(a, v);
 }
 extern "C" void ps2_io_write64(u32 a, u64 v)
@@ -409,8 +448,8 @@ extern "C" void ps2_io_write64(u32 a, u64 v)
     {
         Fatal("64 bit FIFO write at %08x", a);
     }
-    Write32Io(a, static_cast<u32>(v));
-    Write32Io(a + 4, static_cast<u32>(v >> 32));
+    ps2_io_write32(a, static_cast<u32>(v));
+    ps2_io_write32(a + 4, static_cast<u32>(v >> 32));
 }
 extern "C" void ps2_io_write128(u32 a, u128 v)
 {
