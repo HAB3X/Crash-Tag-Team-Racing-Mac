@@ -9,6 +9,10 @@ static void CttrInit()
 {
     CttrRegisterRadIop();
     CttrRegisterAudio();
+    // The network: at the boot the game loads only NETCNF.IRX and EZNETCNF.IRX (the network configuration's modules) and
+    // binds none of their servers, so the loader's "loaded" is all they need for now. Online play goes here, as a virtual
+    // network adapter: the IOP side of ENT_SMAP and DEV9 (loaded when the game goes online) high level, passing the EE
+    // stack's Ethernet frames (libeenet's ent_smap on the EE) to the Mac and back. Not a "no adapter" answer.
 }
 
 int main(int argc, char** argv)
