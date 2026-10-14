@@ -130,6 +130,8 @@ void IoInit();
 
 // --- dmac.cpp
 void DmacInit();
+// A VIF's stall cancelled (VIFn_FBRST's STC): what it held, then its DMA transfer, go on
+void DmacVifUnstall(int vif);
 u32 DmacRead(u32 address);
 void DmacWrite(u32 address, u32 value);
 // The channels' data from the SIF (the IOP side): SIF0 (IOP to EE) moved by the IOP's HLE

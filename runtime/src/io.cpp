@@ -68,8 +68,18 @@ u32 Read32Io(u32 a)
     }
     if (a < 0x10004000)
     {
-        // VIF0 (0x10003800) and VIF1 (0x10003C00) registers: idle, empty FIFOs
-        return 0;
+        // VIF0 (0x10003800) and VIF1 (0x10003C00): STAT (idle, empty FIFOs; VIS and INT while a code's interrupt bit has
+        // stalled it) and CODE (the last code); the rest read as zero
+        Ee::Vif* vif = a < 0x10003C00 ? Hw().vif0 : Hw().vif1;
+        switch (a & 0x3F0)
+        {
+        case 0x000:
+            return vif->stalled() ? 0xC00u : 0;
+        case 0x030:
+            return vif->lastCode;
+        default:
+            return 0;
+        }
     }
     if (a >= 0x10008000 && a < 0x1000F000)
     {
@@ -137,6 +147,12 @@ void Write32Io(u32 a, u32 v)
             t.hold = v & 0xFFFF;
             return;
         }
+        return;
+    }
+    if (a >= 0x10003800 && (a & 0x3F0) == 0x010 && (v & 8) != 0)
+    {
+        // VIFn_FBRST's STC: a stall cancelled, the VIF and its DMA go on
+        DmacVifUnstall(a < 0x10003C00 ? 0 : 1);
         return;
     }
     if (a < 0x10004000)

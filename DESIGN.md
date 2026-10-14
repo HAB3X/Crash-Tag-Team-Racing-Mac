@@ -109,7 +109,11 @@ frames are named by guest address). Kernel memory below 0x00080000 is ordinary R
   VIF1 or GIF started in chain mode drains it (tags and their data read in the ring, wrapping; REF's data outside it) as far as
   fromSPR has filled it, then stays busy with D_STAT's MEIS set until fromSPR adds more (CTTR's renderer). The VIF1 read-back
   (GS to memory) isn't done.
-- INTC: I_STAT, I_MASK; causes raised by the GS (SIGNAL, FINISH, VSINT), the vblank timer and the DMAC.
+- INTC: I_STAT, I_MASK; causes raised by the GS (SIGNAL, FINISH, VSINT), the vblank timer, the DMAC and the VIFs.
+- A VIF code's interrupt bit stalls the VIF once the code is done and raises its INTC cause: the DMA transfer feeding it stops
+  where it is (still busy; the words of a quadword it didn't take wait in its FIFO) until the game cancels the stall
+  (VIFn_FBRST's STC), then goes on. VIFn_STAT shows the stall, VIFn_CODE the last code. CTTR's renderer uploads each texture
+  from its VIF1 interrupt handler, between the draws that need it.
 - GS privileged registers: PMODE, SMODE1/2, DISPFB, DISPLAY, BGCOLOR, CSR (FIELD toggling per vblank, VSINT, FINISH, SIGNAL),
   IMR, SIGLBLID; drawing goes through the GIF to the hardware layer's GS.
 - The VIF and GIF FIFOs (0x10004000-0x10007000) take 128-bit writes.
