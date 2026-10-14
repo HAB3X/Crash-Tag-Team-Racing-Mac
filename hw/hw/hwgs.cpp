@@ -1383,6 +1383,38 @@ private:
     std::vector<PartialWrite> partialWrites_;
     Gs::PageSet mergePages_;
     void MergeWrites(const Gs::PageSet& pages);
+    // Whether local memory has a texture's levels right though their pages are out of date there: each a rectangle the CPU
+    // wrote (in its layout) since the GPU last drew over its pages (a texture uploaded where a target was: its decode found
+    // by its content without putting the upload into memory's copy first)
+    bool CpuWroteLevels(const Gs::Gs::DrawState& state) const
+    {
+        for (u32 i = 0; i < state.levelCount; i++)
+        {
+            const Gs::TextureLevel& lv = state.levels[i];
+            bool found = false;
+            for (const PartialWrite& w : partialWrites_)
+            {
+                if (w.psm == lv.psm && w.bp == lv.bp && w.bw == lv.bw && w.rect.left <= 0 && w.rect.top <= 0 &&
+                    w.rect.right >= static_cast<s32>(lv.width) - 1 && w.rect.bottom >= static_cast<s32>(lv.height) - 1)
+                {
+                    Gs::PageSet pages;
+                    Gs::PagesOfRect(lv.psm, lv.bp, lv.bw, 0, 0, static_cast<s32>(lv.width) - 1, static_cast<s32>(lv.height) - 1, pages);
+                    found = (pages & newestMask_).none() && (pages & cpuStale_ & ~w.valid).none();
+                    if (found)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if (!found)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
     // The records of no use any more: merged, and local memory's rectangle no longer known right
     void DropPartialWrites()
     {
@@ -2359,7 +2391,7 @@ GLuint HwGs::DecodeOnGpu(const Gs::Gs::DrawState& state, s32 left, s32 top, s32 
     // Data the CPU wrote: decoded once for its content, wherever and whenever it's uploaded again
     // ($TWIN_HW_CONTENT_CACHE=0 turns it off)
     static const bool contentCache = std::getenv("TWIN_HW_CONTENT_CACHE") == nullptr || std::getenv("TWIN_HW_CONTENT_CACHE")[0] != '0';
-    if (contentCache && whole && (t.pages & (cpuStale_ | newestMask_)).none())
+    if (contentCache && whole && ((t.pages & (cpuStale_ | newestMask_)).none() || CpuWroteLevels(state)))
     {
         const u64 hash = ContentHash(state);
         ContentTexture& c = contents_[hash];
