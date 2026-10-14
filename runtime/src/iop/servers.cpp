@@ -247,7 +247,8 @@ void Cdvd(RpcCall& c)
     case 0x80000592: // init
         c.Out32(0, 1);
         return;
-    case 0x8000059A: // disk ready: complete
+    case 0x8000059A: // disk ready: complete (SCECdComplete)
+    case 0x8000059C: // the same, in libcdvd 2.6 on
         c.Out32(0, 2);
         return;
     case 0x80000597: // search file: { sceCdlFILE (32 bytes), ?, name[256], the EE's sceCdlFILE }
@@ -319,6 +320,13 @@ void Cdvd(RpcCall& c)
         case 0x03: // disk type: a PlayStation 2 CD
             c.Out32(0, 0x12);
             return;
+        case 0x04: // the last command's error: none
+            c.Out32(0, 0);
+            return;
+        case 0x05: // the tray (its mode in): done, never opened since the last ask
+            c.Out32(0, 1);
+            c.Out32(4, 0);
+            return;
         case 0x22: // media mode
             c.Out32(0, 1);
             return;
@@ -354,7 +362,7 @@ const ServerName g_names[] = {
     {0x80000596, "cdvd"},
     {0x80000597, "cdvd search file"},
     {0x8000059A, "cdvd disk ready"},
-    {0x8000059C, "cdvd"},
+    {0x8000059C, "cdvd disk ready"},
     {0x80000701, "sdrdrv"},
 };
 }
