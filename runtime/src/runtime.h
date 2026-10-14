@@ -209,6 +209,8 @@ void DisplayClose();
 
 // --- input.cpp: port 0's controller from the keyboard, a gamepad and --press
 u32 ButtonsFromNames(const std::string& names);
+// The window's title: the game's (its title less a bracketed edition)
+std::string WindowTitle();
 void InputInit();
 // Where the presenter shows the picture (render coordinates, the same as the mouse's events after conversion)
 void InputPicture(float x, float y, float w, float h);

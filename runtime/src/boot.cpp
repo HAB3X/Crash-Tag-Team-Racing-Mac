@@ -13,6 +13,13 @@ namespace Ps2
 extern u32 g_entryPoint;
 const Ps2GameInfo* g_game = nullptr;
 
+std::string WindowTitle()
+{
+    std::string title = g_game != nullptr ? g_game->title : "PS2 native runtime";
+    size_t bracket = title.find(" (");
+    return bracket == std::string::npos ? title : title.substr(0, bracket);
+}
+
 namespace
 {
 void Usage(const char* program)

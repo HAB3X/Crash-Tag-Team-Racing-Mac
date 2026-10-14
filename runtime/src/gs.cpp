@@ -408,14 +408,34 @@ void PresenterRun()
         {
             SavePicture(picture, name);
         }
-        if (g_options.fps && t >= nextFps)
+        if (t >= nextFps)
         {
+            // Each second: the game's frames and the vblanks (60 a second is the PS2's own speed), in the window's title and
+            // (--fps) the log
             u64 flips = g_flips.load(), vblanks = g_vblanks;
-            Log("%.0f s: %llu frames, %llu vblanks", t, static_cast<unsigned long long>(flips - lastFlips),
-                static_cast<unsigned long long>(vblanks - lastVblanks));
+            u64 frames = flips - lastFlips, blanks = vblanks - lastVblanks;
+            if (g_options.fps)
+            {
+                Log("%.0f s: %llu frames, %llu vblanks", t, static_cast<unsigned long long>(frames),
+                    static_cast<unsigned long long>(blanks));
+            }
+            if (g_window != nullptr)
+            {
+                char title[160];
+                if (blanks >= 57)
+                {
+                    snprintf(title, sizeof(title), "%s - %llu fps", WindowTitle().c_str(), static_cast<unsigned long long>(frames));
+                }
+                else
+                {
+                    snprintf(title, sizeof(title), "%s - %llu fps, %llu%% speed", WindowTitle().c_str(),
+                             static_cast<unsigned long long>(frames), static_cast<unsigned long long>(blanks * 100 / 60));
+                }
+                SDL_SetWindowTitle(g_window, title);
+            }
             lastFlips = flips;
             lastVblanks = vblanks;
-            nextFps += 1;
+            nextFps = t + 1;
         }
         if (!g_options.watch.empty() && t >= nextWatch)
         {

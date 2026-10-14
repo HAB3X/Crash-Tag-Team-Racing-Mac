@@ -280,7 +280,7 @@ SDL_Window* DisplayOpen()
     if (!g_options.headless)
     {
         SetGlAttributes();
-        g_window = SDL_CreateWindow("PS2 native runtime", 1280, 960, SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
+        g_window = SDL_CreateWindow(WindowTitle().c_str(), 1280, 960, SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
         if (g_window == nullptr || !MakeWindowContext())
         {
             Log("graphics: no window: %s", SDL_GetError());
