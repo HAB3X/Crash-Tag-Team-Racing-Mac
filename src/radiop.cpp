@@ -234,6 +234,11 @@ void Command(const u8* p, u32 size)
 {
     (void)size;
     u32 type = Get32(p, 12);
+    if (Once("radiop request " + std::to_string(type)))
+    {
+        Log("Bink's IOP side: first request %u: %08x %08x %08x %08x %08x", type, Get32(p, 16), Get32(p, 20), Get32(p, 24),
+            Get32(p, 28), Get32(p, 32));
+    }
     switch (type)
     {
     case 0:
