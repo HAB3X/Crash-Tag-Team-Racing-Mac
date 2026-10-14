@@ -51,6 +51,9 @@ add_library(ps2runtime STATIC
     runtime/src/iop/mcserv.cpp
     runtime/src/iop/padman.cpp
     runtime/src/iop/servers.cpp
+    runtime/src/sound/libsd.cpp
+    runtime/src/sound/output.cpp
+    runtime/src/sound/spu2.cpp
 )
 target_include_directories(ps2runtime PUBLIC runtime/include)
 target_link_libraries(ps2runtime PUBLIC ps2hw SDL3::SDL3)

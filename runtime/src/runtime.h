@@ -177,6 +177,9 @@ struct Options
     int gs = -1;
     int gsScale = -1;
     int textureUpscale = -1;
+    // The sound: everything the SPU2 makes written to a WAV file; no audio device (the sound is made all the same)
+    std::string audioDump;
+    bool mute = false;
 };
 extern Options g_options;
 
@@ -235,6 +238,11 @@ void IopUpdate();
 // The EE took the IOP's last reply (its SifSetDChain, or the end of its SIF0 interrupt)
 void SifReplyTaken();
 u8* IopMem();
+
+// --- sound/output.cpp: the SPU2's output (ps2/sound.h)
+void SoundInit();
+// The WAV file finished
+void SoundStop();
 
 // --- iop/padman.cpp
 // The pads' frames, rewritten at each vertical blank (the IOP's PADMAN does it then)
