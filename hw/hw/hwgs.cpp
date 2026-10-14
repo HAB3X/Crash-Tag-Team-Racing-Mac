@@ -8,8 +8,9 @@
 //   The draws' viewport is far bigger than the target (the scissor keeps them in it), so nothing reaching past the target is
 //   clipped either (clipping makes new vertexes off the grid). At the PS2's resolution it's the GS's own sampling
 // - Colours, texture coordinates, fog and depth are interpolated linearly in the screen (noperspective) as the GS's DDA does;
-//   STQ is divided at each pixel. Colours are the GS's bytes (0-255, alpha 0x80 = 1.0) throughout the shader, truncated where the
-//   GS truncates
+//   STQ is divided at each pixel. Texel coordinates are nudged a 256th of a texel up, off the edges the GPU's interpolation
+//   falls a hair short of where the GS's exact coordinates are on them. Colours are the GS's bytes (0-255, alpha 0x80 = 1.0)
+//   throughout the shader, truncated where the GS truncates
 // - Depth is the GS's value over 2^32 (exact below 2^24) in a 32 bit float buffer, written from the shader (truncated as the
 //   GS's is); the tests are GL's. A 32 bit depth buffer first drawn with values in the top half (an effect's, made from
 //   colours) is kept reversed, (2^32 - 1 - z) / 2^32, exact up there, its tests reversed
@@ -436,6 +437,11 @@ void main()
         uv = uv - dFdx(uv) * back.x - dFdy(uv) * back.y;
     }
 #endif
+    // The GS's texel coordinates are exact (S/Q times the size, on its sixteenth of a texel grid); the GPU's interpolation can
+    // land a hair under a texel's edge where the GS lands on it, and read the texel before it. A 256th of a texel, well inside
+    // the GS's grid, puts it back on the GS's side (an effect reading a buffer as 8 bit texels one to a pixel: every
+    // misread texel is another pixel's byte)
+    uv += 1.0 / 256.0;
     float lod = 0.0;
 #if MIPMAP
 #if LODCONST
