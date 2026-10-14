@@ -4,6 +4,10 @@
 extra = []
 # Addresses that look like starts but aren't
 not = []
+# The C library's setjmp and longjmp (Radical's fibers switch with them, Lua's errors unwind with them)
+setjmp = ["0x4f2e28"]
+longjmp = ["0x4f2e90"]
 
 [overrides]
 # address = "host function": replaced by the runtime or by src/
+"0x3b4eb0" = "CttrFiberStart"   # a fiber's first run on its own stack (src/fibers.cpp)
