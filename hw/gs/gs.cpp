@@ -52,6 +52,8 @@ void Gs::PrepareCpuRect(bool write, u32 psm, u32 bp, u32 bw, s32 left, s32 top, 
         PageSet full;
         FullPagesOfRect(psm, bp, bw, left, top, right, bottom, full);
         pages &= ~full;
+        backend_->BeforeCpuWriteRect(psm, bp, bw, left, top, right, bottom, pages, full);
+        return;
     }
 
     if (pages.none())
@@ -59,14 +61,7 @@ void Gs::PrepareCpuRect(bool write, u32 psm, u32 bp, u32 bw, s32 left, s32 top, 
         return;
     }
 
-    if (write)
-    {
-        backend_->BeforeCpuWrite(pages);
-    }
-    else
-    {
-        backend_->BeforeCpuRead(pages);
-    }
+    backend_->BeforeCpuReadRect(psm, bp, bw, left, top, right, bottom, pages);
 }
 
 template <typename Io>

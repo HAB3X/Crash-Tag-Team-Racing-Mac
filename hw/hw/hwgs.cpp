@@ -878,6 +878,52 @@ void main()
 }
 )";
 
+// The CPU's writes of rectangles of a buffer (one layout) put into memory's copy: each unit (pixel) of the pages' words in a
+// rectangle the CPU's (fresh: local memory's pages), every other memory's copy's as it was (mem: a copy of it). The bits of a
+// unit a write sets: unitMask (24 bit and the 8 and 4 bit formats in 32 bit words write part of each)
+constexpr const char* MergeWritesSource = R"(
+uniform usampler2D fresh;
+uniform int rectCount;
+uniform ivec4 rects[8];
+uniform uint unitMask;
+uniform uint pageMask[16];
+out uint word;
+void main()
+{
+    ivec2 at = ivec2(floor(gl_FragCoord.xy));
+    uint w = uint(at.y) * 1024u + uint(at.x);
+    uint page = w >> 11;
+    if ((pageMask[page >> 5] & (1u << (page & 31u))) == 0u)
+    {
+        discard;
+    }
+
+    uint units = 1u << uint(unitShift);
+    uint unitAll = unitBits == 32 ? 0xFFFFFFFFu : ((1u << uint(unitBits)) - 1u);
+    uint take = 0u;
+    for (uint k = 0u; k < units; k++)
+    {
+        ivec2 p;
+        if (!UnitPixel((w << uint(unitShift)) | k, p))
+        {
+            continue;
+        }
+
+        for (int r = 0; r < rectCount; r++)
+        {
+            if (p.x >= rects[r].x && p.y >= rects[r].y && p.x <= rects[r].z && p.y <= rects[r].w)
+            {
+                take |= unitAll << (k * uint(unitBits));
+                break;
+            }
+        }
+    }
+
+    take &= unitMask;
+    word = (texelFetch(mem, at, 0).r & ~take) | (texelFetch(fresh, at, 0).r & take);
+}
+)";
+
 // A texture level decoded from memory's copy as the software GS decodes it (DecodeTexel: TEXA, the CLUT), into a texture's
 // level: RGBA, the PS2's alpha (0x80 = 1.0) in the bytes
 constexpr const char* DecodeSource = R"(
@@ -1206,6 +1252,9 @@ public:
     bool Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count) override;
     void BeforeCpuRead(const Gs::PageSet& pages) override;
     void BeforeCpuWrite(const Gs::PageSet& pages) override { BeforeCpuRead(pages); }
+    void BeforeCpuWriteRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bottom, const Gs::PageSet& pages,
+                            const Gs::PageSet& full) override;
+    void BeforeCpuReadRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bottom, const Gs::PageSet& pages) override;
     void Flush() override;
     bool PagesGpuNewer(const Gs::PageSet& pages) override
     {
@@ -1317,6 +1366,30 @@ private:
     GLuint memFromTargetProgram_ = 0;
     GLuint copyColourProgram_ = 0;
     GLuint copyWordProgram_ = 0;
+    GLuint mergeWritesProgram_ = 0;
+    // The CPU's writes into pages whose newer copy was the GPU's (a texture uploaded over what a target drew), waiting to be put
+    // into memory's copy (SyncMem): local memory has only their rectangles right, so its pages stay out of date (cpuStale_)
+    // (and once merged, kept while local memory has the rectangle right in those of its pages: valid; a read of a rectangle
+    // inside it, a CLUT uploaded with its texture, needs no read back)
+    struct PartialWrite
+    {
+        u32 psm;
+        u32 bp;
+        u32 bw;
+        Rect rect;
+        Gs::PageSet pages;
+        Gs::PageSet valid;
+    };
+    std::vector<PartialWrite> partialWrites_;
+    Gs::PageSet mergePages_;
+    void MergeWrites(const Gs::PageSet& pages);
+    // The records of no use any more: merged, and local memory's rectangle no longer known right
+    void DropPartialWrites()
+    {
+        partialWrites_.erase(std::remove_if(partialWrites_.begin(), partialWrites_.end(),
+                                            [](const PartialWrite& w) { return w.pages.none() && w.valid.none(); }),
+                             partialWrites_.end());
+    }
     // A rectangle of a texture copied into the framebuffer bound (its size given) at the same places
     void CopyRect(GLuint program, GLuint source, f32 viewWidth, f32 viewHeight, s32 x0, s32 y0, s32 x1, s32 y1);
     GLuint targetFromMemProgram_ = 0;
@@ -2043,6 +2116,8 @@ void HwGs::InitMemory()
                                      false);
     copyWordProgram_ = LinkProgram(CompileShader(GL_VERTEX_SHADER, MemRectVertexSource), CompileShader(GL_FRAGMENT_SHADER, CopyWordSource),
                                    false);
+    mergeWritesProgram_ = LinkProgram(CompileShader(GL_VERTEX_SHADER, MemRectVertexSource),
+                                      CompileShader(GL_FRAGMENT_SHADER, header + MemCommonSource + MergeWritesSource), false);
     decodeProgram_ = LinkProgram(CompileShader(GL_VERTEX_SHADER, MemRectVertexSource),
                                  CompileShader(GL_FRAGMENT_SHADER, header + MemCommonSource + DecodeSource), false);
     upscaleProgram_ = LinkProgram(CompileShader(GL_VERTEX_SHADER, MemRectVertexSource), CompileShader(GL_FRAGMENT_SHADER, UpscaleSource),
@@ -2937,6 +3012,12 @@ void HwGs::SyncMem(const Gs::PageSet& pages)
         }
     }
 
+    Gs::PageSet merges = pages & memStale_ & mergePages_ & ~newestMask_;
+    if (merges.any())
+    {
+        MergeWrites(merges);
+    }
+
     Gs::PageSet uploads = pages & memStale_ & ~newestMask_;
     if (uploads.none())
     {
@@ -3105,6 +3186,14 @@ void HwGs::SyncCpu(const Gs::PageSet& pages)
     gs_.NextGeneration();
     cpuStale_ &= ~reads;
     shadowGood_ |= reads;
+    // Local memory is whole again: its writes are the page's
+    mergePages_ &= ~reads;
+    for (PartialWrite& w : partialWrites_)
+    {
+        w.valid &= ~reads;
+    }
+
+    DropPartialWrites();
 }
 
 void HwGs::ProcessWrites()
@@ -3146,7 +3235,8 @@ void HwGs::ProcessWrites()
     memStale_ |= written;
     fromTargetPages_ &= ~written;
     scaledPages_ &= ~written;
-    cpuStale_ &= ~written;
+    // (local memory has only the rectangles right of a page whose writes are merged into memory's copy: still out of date)
+    cpuStale_ &= ~written | mergePages_;
     shadowGood_ &= ~written;
     for (auto& target : targets_)
     {
@@ -3158,6 +3248,222 @@ void HwGs::ProcessWrites()
 void HwGs::BeforeCpuRead(const Gs::PageSet& pages)
 {
     SyncCpu(pages);
+}
+
+// A transfer into pages the GPU holds newer (a texture uploaded where an effect's buffer was): memory's copy brought up to
+// date on the GPU, the rectangle's pixels put into it once the CPU has written them (MergeWrites), instead of reading the
+// pages back first (which waits for the GPU's work so far: 25 a frame in Wrath of Cortex's levels held them to 45 frames a
+// second)
+void HwGs::BeforeCpuWriteRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bottom, const Gs::PageSet& pages,
+                              const Gs::PageSet& full)
+{
+    ProcessWrites();
+    // Pages written whole: local memory's will be all of them
+    if ((full & mergePages_).any())
+    {
+        mergePages_ &= ~full;
+        for (PartialWrite& w : partialWrites_)
+        {
+            w.pages &= ~full;
+            w.valid &= ~full;
+        }
+
+        DropPartialWrites();
+    }
+
+    Gs::PageSet newer = pages & (cpuStale_ | newestMask_);
+    if (newer.none())
+    {
+        return;
+    }
+
+    u32 family = 0;
+    bool xorZ = false;
+    LayoutOf(psm, &family, &xorZ);
+    const FamilyInfo& info = Families[family];
+    const u32 across = std::max<u32>(info.halfWidth ? bw >> 1 : bw, 1);
+    const bool layoutKnown = psm == Gs::PSMCT32 || psm == Gs::PSMCT24 || psm == Gs::PSMCT16 || psm == Gs::PSMCT16S ||
+                             psm == Gs::PSMT8 || psm == Gs::PSMT4 || psm == Gs::PSMT8H || psm == Gs::PSMT4HL || psm == Gs::PSMT4HH ||
+                             psm == Gs::PSMZ32 || psm == Gs::PSMZ24 || psm == Gs::PSMZ16 || psm == Gs::PSMZ16S;
+    // The rectangle inside the buffer's width (past it the GS's addresses wrap into other rows' pages) and its pages' rows
+    if (!layoutKnown || bw == 0 || left < 0 || top < 0 || static_cast<u32>(right) >= across * info.pageWidth || bottom >= 2048)
+    {
+        SyncCpu(pages);
+        return;
+    }
+
+    SyncMem(newer);
+    // (the oldest records' rectangles forgotten past a few dozen: the reads they spare are of what was written last)
+    if (partialWrites_.size() >= 64)
+    {
+        for (size_t i = 0; i < partialWrites_.size() / 2; i++)
+        {
+            partialWrites_[i].valid.reset();
+        }
+
+        DropPartialWrites();
+    }
+
+    partialWrites_.push_back({psm, bp, bw, Rect{left, top, right, bottom}, newer, newer});
+    mergePages_ |= newer;
+}
+
+// A CPU read (a CLUT's load): the pages the GPU holds newer read back, but not where the rectangle is inside one the CPU wrote
+// into them since (local memory has it right)
+void HwGs::BeforeCpuReadRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bottom, const Gs::PageSet& pages)
+{
+    ProcessWrites();
+    Gs::PageSet reads = pages & (cpuStale_ | newestMask_);
+    for (const PartialWrite& w : partialWrites_)
+    {
+        if (w.psm == psm && w.bp == bp && w.bw == bw && w.rect.left <= left && w.rect.top <= top && w.rect.right >= right &&
+            w.rect.bottom >= bottom)
+        {
+            reads &= ~(w.valid & ~newestMask_);
+        }
+    }
+
+    if (reads.any())
+    {
+        SyncCpu(reads);
+    }
+}
+
+// The CPU's writes of the pages waiting for it put into memory's copy (they're in local memory, its pages' other words not)
+void HwGs::MergeWrites(const Gs::PageSet& pages)
+{
+    Flush();
+    Gl& gl = GetGl();
+    const u8* memory = gs_.memory();
+    // Local memory's pages (fresh) and memory's copy as it is (old), in two staging textures at the pages' own rows
+    const u32 freshSlot = stagingNext_++ % StagingRing;
+    const u32 oldSlot = stagingNext_++ % StagingRing;
+    gl.BindTexture(GL_TEXTURE_2D, memStaging_[freshSlot]);
+    gl.PixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    gl.PixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    std::vector<std::pair<u32, u32>> runs;
+    for (u32 page = 0; page < Gs::PageCount; page++)
+    {
+        if (!pages.test(page))
+        {
+            continue;
+        }
+
+        u32 end = page;
+        while (end + 1 < Gs::PageCount && pages.test(end + 1))
+        {
+            end++;
+        }
+
+        gl.TexSubImage2D(GL_TEXTURE_2D, 0, 0, static_cast<GLint>(page * 2), 1024, static_cast<GLsizei>((end - page + 1) * 2),
+                         GL_RED_INTEGER, GL_UNSIGNED_INT, memory + static_cast<size_t>(page) * 8192);
+        runs.emplace_back(page, end);
+        page = end;
+    }
+
+    // Each layout's rectangles in a pass of their own (8 at most a pass), from memory's copy as the pass before left it
+    std::vector<bool> merged(partialWrites_.size(), false);
+    for (size_t first = 0; first < partialWrites_.size(); first++)
+    {
+        const PartialWrite& lead = partialWrites_[first];
+        if (merged[first] || (lead.pages & pages).none())
+        {
+            continue;
+        }
+
+        Gs::PageSet passPages;
+        std::vector<Rect> rects;
+        s32 lowest = 0;
+        for (size_t i = first; i < partialWrites_.size() && rects.size() < 8; i++)
+        {
+            const PartialWrite& w = partialWrites_[i];
+            if (merged[i] || (w.pages & pages).none() || w.psm != lead.psm || w.bp != lead.bp || w.bw != lead.bw)
+            {
+                continue;
+            }
+
+            merged[i] = true;
+            passPages |= w.pages & pages;
+            rects.push_back(w.rect);
+            lowest = std::max(lowest, w.rect.bottom);
+        }
+
+        gl.BindFramebuffer(GL_FRAMEBUFFER, stagingFbo_[oldSlot]);
+        Pass(stagingFbo_[oldSlot], "memory merge copy");
+        for (const auto& run : runs)
+        {
+            CopyRect(copyWordProgram_, memTexture_, 1024.0f, 1024.0f, 0, static_cast<s32>(run.first * 2), 1024,
+                     static_cast<s32>((run.second + 1) * 2));
+        }
+
+        u32 family = 0;
+        bool xorZ = false;
+        LayoutOf(lead.psm, &family, &xorZ);
+        const FamilyInfo& info = Families[family];
+        UseLayout(mergeWritesProgram_, lead.psm, lead.bp, lead.bw, static_cast<u32>(lowest) / info.pageHeight + 1);
+        auto uniform = [&](const char* name) { return gl.GetUniformLocation(mergeWritesProgram_, name); };
+        gl.ActiveTexture(GL_TEXTURE0 + 3);
+        gl.BindTexture(GL_TEXTURE_2D, memStaging_[oldSlot]);
+        gl.ActiveTexture(GL_TEXTURE0 + 4);
+        gl.BindTexture(GL_TEXTURE_2D, memStaging_[freshSlot]);
+        gl.ActiveTexture(GL_TEXTURE0);
+        gl.Uniform1i(uniform("mem"), 3);
+        gl.Uniform1i(uniform("fresh"), 4);
+        gl.Uniform1i(uniform("rectCount"), static_cast<GLint>(rects.size()));
+        for (size_t r = 0; r < rects.size(); r++)
+        {
+            char name[24];
+            std::snprintf(name, sizeof(name), "rects[%zu]", r);
+            gl.Uniform4i(uniform(name), rects[r].left, rects[r].top, rects[r].right, rects[r].bottom);
+        }
+
+        const u32 unitMask = lead.psm == Gs::PSMCT24 || lead.psm == Gs::PSMZ24 ? 0x00FFFFFFu
+                             : lead.psm == Gs::PSMT8H                          ? 0xFF000000u
+                             : lead.psm == Gs::PSMT4HL                         ? 0x0F000000u
+                             : lead.psm == Gs::PSMT4HH                         ? 0xF0000000u
+                                                                               : 0xFFFFFFFFu;
+        gl.Uniform1ui(uniform("unitMask"), unitMask);
+        GLuint mask[16] = {};
+        for (u32 page = 0; page < Gs::PageCount; page++)
+        {
+            if (passPages.test(page))
+            {
+                mask[page >> 5] |= 1u << (page & 31);
+            }
+        }
+
+        for (u32 i = 0; i < 16; i++)
+        {
+            char name[24];
+            std::snprintf(name, sizeof(name), "pageMask[%u]", i);
+            gl.Uniform1ui(uniform(name), mask[i]);
+        }
+
+        gl.Uniform2f(uniform("viewSize"), 1024.0f, 1024.0f);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, memFbo_);
+        Pass(memFbo_, "memory merge");
+        gl.Viewport(0, 0, 1024, 1024);
+        gl.Disable(GL_SCISSOR_TEST);
+        gl.Disable(GL_DEPTH_TEST);
+        gl.Disable(GL_STENCIL_TEST);
+        gl.Disable(GL_BLEND);
+        gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        gl.BindVertexArray(emptyArray_);
+        const GLint rectUniform = uniform("rect");
+        for (const auto& run : runs)
+        {
+            gl.Uniform4f(rectUniform, 0.0f, static_cast<f32>(run.first * 2), 1024.0f, static_cast<f32>((run.second + 1) * 2));
+            gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        }
+    }
+
+    for (PartialWrite& w : partialWrites_)
+    {
+        w.pages &= ~pages;
+    }
+
+    memStale_ &= ~pages;
+    mergePages_ &= ~pages;
 }
 
 void HwGs::Download(Target* target)
@@ -3541,6 +3847,15 @@ void HwGs::MarkDrawn(Target* target, const Gs::PageSet& pages)
     newestMask_ |= drawn;
     memStale_ |= drawn;
     cpuStale_ |= drawn;
+    if (!partialWrites_.empty())
+    {
+        for (PartialWrite& w : partialWrites_)
+        {
+            w.valid &= ~drawn;
+        }
+
+        DropPartialWrites();
+    }
     for (auto& other : targets_)
     {
         if (other.get() != target)

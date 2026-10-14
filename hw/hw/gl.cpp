@@ -82,6 +82,7 @@ bool LoadGl()
     ok &= Load(g_Gl.Uniform2f, "glUniform2f");
     ok &= Load(g_Gl.Uniform3f, "glUniform3f");
     ok &= Load(g_Gl.Uniform4f, "glUniform4f");
+    ok &= Load(g_Gl.Uniform4i, "glUniform4i");
     ok &= Load(g_Gl.Uniform1iv, "glUniform1iv");
     ok &= Load(g_Gl.GenVertexArrays, "glGenVertexArrays");
     ok &= Load(g_Gl.BindVertexArray, "glBindVertexArray");
