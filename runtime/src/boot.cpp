@@ -3,6 +3,7 @@
 #include "runtime.h"
 
 #include "ps2/runtime.h"
+#include "ui/menus.h"
 
 #include <cstdlib>
 #include <thread>
@@ -27,8 +28,9 @@ void Usage(const char* program)
     fprintf(stderr,
             "usage: %s --disc IMAGE [--headless] [--snapshots DIR] [--snapshot-every S] [--snapshot-at S,S,...]\n"
             "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq]\n"
-            "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--press S:BUTTON[+BUTTON][:HOLD],...]\n"
-            "          [--type S:TEXT] [--click S:X,Y]\n"
+            "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--settings DIR]\n"
+            "          [--press S:BUTTON[+BUTTON][:HOLD],...]\n"
+            "          [--type S:TEXT] [--click S:X,Y] [--ui S:KEY,KEY,...]\n"
             "          [--fps] [--gs hardware|software] [--scale 1-8] [--texture-upscale 0|2|4] [--mute] [--audio-dump FILE.wav]\n",
             program);
 }
@@ -242,6 +244,16 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
                 g_options.typed.emplace_back(atof(item.substr(0, colon).c_str()), text);
             }
         }
+        else if (a == "--ui")
+        {
+            // 50:esc,shot,down,enter,shot (the PC menus' keys from game time 50 s, a third of a second apart: menus.cpp)
+            std::string item = next();
+            size_t colon = item.find(':');
+            if (colon != std::string::npos)
+            {
+                g_options.ui.emplace_back(atof(item.substr(0, colon).c_str()), item.substr(colon + 1));
+            }
+        }
         else if (a == "--audio-dump")
         {
             g_options.audioDump = next();
@@ -253,6 +265,10 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
         else if (a == "--memcards")
         {
             g_options.memcardDir = next();
+        }
+        else if (a == "--settings")
+        {
+            g_options.settingsDir = next();
         }
         else if (a == "--log")
         {
@@ -281,13 +297,18 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
     g_game = game;
     // ~/Library/Application Support/PS2 Native Runtime/<the executable>/: the settings, and the memory cards in memcards/
     const char* home = getenv("HOME");
-    g_options.settingsDir =
-        std::string(home != nullptr ? home : ".") + "/Library/Application Support/PS2 Native Runtime/" + game->executable;
+    if (g_options.settingsDir.empty())
+    {
+        g_options.settingsDir =
+            std::string(home != nullptr ? home : ".") + "/Library/Application Support/PS2 Native Runtime/" + game->executable;
+    }
     if (g_options.memcardDir.empty())
     {
         g_options.memcardDir = g_options.settingsDir + "/memcards";
     }
 
+    // The PC menus' settings (options.txt), before what they set starts
+    Ui::MenusInit();
     MemoryInit();
     if (!DiscOpen(g_options.disc))
     {

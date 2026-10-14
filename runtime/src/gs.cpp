@@ -9,6 +9,7 @@
 #include "../../hw/ee/vu1translate.h"
 #include "../../hw/gs/gs.h"
 #include "../../hw/png.h"
+#include "ui/menus.h"
 
 #include <SDL3/SDL.h>
 
@@ -294,7 +295,7 @@ void GsVblank(bool start)
     }
     // The picture: every frame for a window or snapshots (the game's thread kept at most two pictures ahead), its pixels read
     // for a snapshot when one is due
-    bool show = !g_options.headless;
+    bool show = !g_options.headless || !g_options.ui.empty();
     if (!show && g_options.snapshotDir.empty())
     {
         return;
@@ -381,14 +382,19 @@ void PresenterRun()
     u64 lastFlips = 0, lastVblanks = 0;
     InputInit();
     u64 shown = 0;
+    // The last picture of the GS's memory (the software GS's), for the menus' scripted pictures when headless
+    Gs::DisplayImage lastImage;
     for (;;)
     {
         Gs::DisplayImage image;
         std::vector<std::pair<std::string, Gs::DisplayImage>> snapshots;
         bool fresh = false;
+        // The PC menus up: drawn again and again over the paused game's last picture
+        bool overlay = Ui::MenusVisible();
         {
             std::unique_lock<std::mutex> lock(g_pictureLock);
-            g_pictureCv.wait_for(lock, std::chrono::milliseconds(20), [&] { return g_stop || g_pictureSerial != shown; });
+            g_pictureCv.wait_for(lock, std::chrono::milliseconds(overlay ? 4 : 20),
+                                 [&] { return g_stop || g_pictureSerial != shown; });
             if (g_stop)
             {
                 break;
@@ -475,20 +481,35 @@ void PresenterRun()
                 {
                     g_stop = true;
                 }
-                InputEvent(e);
+                // The PC menus take what's theirs (all of it while they're up)
+                if (!Ui::MenusEvent(e))
+                {
+                    InputEvent(e);
+                }
             }
-            if (g_stop)
+            Ui::MenusFrame(game);
+            if (g_stop || Ui::MenusQuitting())
             {
                 break;
             }
-            if (fresh)
+            if (fresh && image.width != 0 && g_options.headless)
+            {
+                lastImage = image;
+            }
+            overlay = Ui::MenusVisible();
+            if (fresh || overlay)
             {
                 SDL_FRect rect = {};
-                DisplayPresent(image.width != 0 ? &image : nullptr, &rect);
+                DisplayPresent(fresh && image.width != 0 ? &image : nullptr, overlay, &rect);
                 if (rect.w > 0)
                 {
                     InputPicture(rect.x, rect.y, rect.w, rect.h);
                 }
+            }
+            std::string shot = Ui::MenusShotDue();
+            if (!shot.empty())
+            {
+                DisplayShot(shot, lastImage.width != 0 ? &lastImage : nullptr);
             }
         }
     }

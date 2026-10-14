@@ -30,6 +30,10 @@ std::recursive_mutex g_lock;
 SDL_AudioStream* g_stream = nullptr;
 std::thread g_thread;
 std::atomic<bool> g_running = false;
+// The PC menus' pause (nothing made, the driver's timer stopped with it), and the device's volume (the master volume, 0 when
+// muted)
+std::atomic<bool> g_paused = false;
+std::atomic<float> g_gain = 1.0f;
 
 // The timer: its period and function, and the samples left until it runs
 u32 g_timerPeriod = 0;
@@ -103,6 +107,14 @@ void SDLCALL Callback(void*, SDL_AudioStream* stream, int additional, int)
     {
         u32 frames = std::min<u32>(StepFrames, static_cast<u32>(additional + 3) / 4);
         Make(buffer, frames);
+        float gain = g_gain.load();
+        if (gain < 1.0f)
+        {
+            for (u32 i = 0; i < frames * 2; i++)
+            {
+                buffer[i] = static_cast<s16>(static_cast<float>(buffer[i]) * gain);
+            }
+        }
         SDL_PutAudioStreamData(stream, buffer, static_cast<int>(frames * 4));
         additional -= static_cast<int>(frames * 4);
     }
@@ -117,6 +129,17 @@ void Thread()
     u64 made = 0;
     while (g_running)
     {
+        if (g_paused)
+        {
+            // Paused: the clock's time meanwhile isn't owed
+            auto stopped = std::chrono::steady_clock::now();
+            while (g_paused && g_running)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            start += std::chrono::steady_clock::now() - stopped;
+            continue;
+        }
         double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         if (made < static_cast<u64>(seconds * SampleRate) + LeadFrames)
         {
@@ -139,6 +162,24 @@ void SoundSetTimer(u32 samples, std::function<void()> tick)
     g_timerPeriod = samples;
     g_timerLeft = samples;
 }
+
+void SoundPause(bool paused)
+{
+    g_paused = paused;
+    if (g_stream != nullptr)
+    {
+        if (paused)
+        {
+            SDL_PauseAudioStreamDevice(g_stream);
+        }
+        else
+        {
+            SDL_ResumeAudioStreamDevice(g_stream);
+        }
+    }
+}
+
+void SoundSetGain(float gain) { g_gain = std::clamp(gain, 0.0f, 1.0f); }
 
 void SoundInit()
 {
@@ -174,7 +215,10 @@ void SoundInit()
             }
             else
             {
-                SDL_ResumeAudioStreamDevice(g_stream);
+                if (!g_paused)
+                {
+                    SDL_ResumeAudioStreamDevice(g_stream);
+                }
                 Log("audio: playing at %u Hz", SampleRate);
                 return;
             }

@@ -13,6 +13,7 @@
 #include "runtime.h"
 
 #include "ps2/runtime.h"
+#include "ui/menus.h"
 
 #include <algorithm>
 #include <chrono>
@@ -130,6 +131,15 @@ std::condition_variable g_idleCv;
 // Pending events the processor holder deals with: vblank start and end
 std::atomic<int> g_vblankStart{0};
 std::atomic<int> g_vblankEnd{0};
+// The PC menus' pause: wanted (the processor holder stops at its next poll point, the timer thread makes no vblanks or
+// alarms), and work for the game's side (a setting's change, an action), done by whoever holds the processor between its
+// instructions, or by the timer thread when no thread does
+bool g_pauseWanted = false;
+std::condition_variable g_pauseCv;
+std::vector<std::function<void()>> g_gameWork;
+// The game's time stands still while it's paused: the nanoseconds paused so far, and the time it stopped at (-1: running)
+std::atomic<long long> g_pausedNs{0};
+std::atomic<long long> g_frozenNs{-1};
 
 // The kernel's syscall table, where libkernel looks for the handlers it installed with SetSyscall (it scans kernel memory for
 // them to find the table): user handlers by number, also written into the table in low memory
@@ -160,7 +170,7 @@ void Ret(Ps2Cpu* c, s64 value) { c->r[2].sd[0] = value; }
 void UpdatePending()
 {
     bool any = (g_intcStat & g_intcMask) != 0 || (g_dmacStat & (g_dmacStat >> 16) & 0x3FF) != 0 ||
-               g_vblankStart.load() != 0 || g_vblankEnd.load() != 0;
+               g_vblankStart.load() != 0 || g_vblankEnd.load() != 0 || g_pauseWanted || !g_gameWork.empty();
     if (!any)
     {
         u64 now = BusCycles();
@@ -318,9 +328,47 @@ void CallHandler(u32 function, u32 a0, u32 a1, u32 a2, u32 gp)
 
 u32 g_gp = 0;
 
+// The work asked of the game's side, done in order (the lock held, released around it)
+void RunGameWork(std::unique_lock<std::mutex>& lock)
+{
+    while (!g_gameWork.empty())
+    {
+        std::vector<std::function<void()>> work;
+        work.swap(g_gameWork);
+        lock.unlock();
+        for (std::function<void()>& w : work)
+        {
+            w();
+        }
+        lock.lock();
+    }
+}
+
+// The processor holder stops here while the game is paused, doing the game's side's work as it comes
+void Park(std::unique_lock<std::mutex>& lock)
+{
+    for (;;)
+    {
+        RunGameWork(lock);
+        if (!g_pauseWanted)
+        {
+            return;
+        }
+        g_pauseCv.wait(lock);
+    }
+}
+
 // Runs what's pending (the lock held, released around the guest's handlers)
 void ServiceLocked(std::unique_lock<std::mutex>& lock)
 {
+    if (g_inInterrupt == 0)
+    {
+        if (g_pauseWanted && !g_idleHandling)
+        {
+            Park(lock);
+        }
+        RunGameWork(lock);
+    }
     if (g_vblankStart.exchange(0))
     {
         lock.unlock();
@@ -330,6 +378,7 @@ void ServiceLocked(std::unique_lock<std::mutex>& lock)
         {
             g_game->vblank();
         }
+        Ui::MenusGameVblank();
         lock.lock();
         g_intcStat |= 1u << 2;
         if (g_vsyncFlag != 0)
@@ -455,6 +504,22 @@ void TimerThread()
         std::this_thread::sleep_until(next);
         {
             std::unique_lock<std::mutex> lock(g_lock);
+            if (g_pauseWanted)
+            {
+                // Paused: no vblanks, no alarms; the game's side's work done here while no thread holds the processor
+                while (g_pauseWanted)
+                {
+                    if (g_current == nullptr && !g_idleHandling && !g_gameWork.empty())
+                    {
+                        g_idleHandling = true;
+                        RunGameWork(lock);
+                        g_idleHandling = false;
+                    }
+                    g_pauseCv.wait_for(lock, std::chrono::milliseconds(10));
+                }
+                next = clock::now();
+                continue;
+            }
             g_vblankStart = 1;
             UpdatePending();
         }
@@ -920,10 +985,46 @@ const char* SyscallName(int n)
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------
+static long long ElapsedNs()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - g_start).count();
+}
+
 u64 BusCycles()
 {
-    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - g_start).count();
+    // The game's time: the wall clock's less the time paused (standing still while it's paused)
+    long long frozen = g_frozenNs.load();
+    long long ns = frozen >= 0 ? frozen : ElapsedNs() - g_pausedNs.load();
     return static_cast<u64>(static_cast<double>(ns) * 0.147456);
+}
+
+void KernelPause(bool paused)
+{
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (paused == g_pauseWanted)
+    {
+        return;
+    }
+    if (paused)
+    {
+        g_frozenNs = ElapsedNs() - g_pausedNs.load();
+    }
+    else
+    {
+        g_pausedNs = ElapsedNs() - g_frozenNs.load();
+        g_frozenNs = -1;
+    }
+    g_pauseWanted = paused;
+    UpdatePending();
+    g_pauseCv.notify_all();
+}
+
+void KernelOnGameSide(std::function<void()> work)
+{
+    std::lock_guard<std::mutex> lock(g_lock);
+    g_gameWork.push_back(std::move(work));
+    UpdatePending();
+    g_pauseCv.notify_all();
 }
 
 bool InInterrupt() { return g_inInterrupt > 0; }
