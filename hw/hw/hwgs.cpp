@@ -18,7 +18,9 @@
 //   sample point), not the one nearest the coordinate
 // - The blend ((A - B) * C >> 7) + D is GL's blending: dual source, the second output's alpha C (the source alpha / 128), or
 //   the constant alpha (FIX / 128); the alpha written is the source's (FBA applied), as the GS doesn't blend alpha
-// - A failed alpha test's AFAIL is a second pass over the batch's failing pixels with the writes AFAIL keeps
+// - A failed alpha test's AFAIL is a second pass over the batch's failing pixels with the writes AFAIL keeps (where primitives
+//   of a batch overlap, an earlier one's failing pixels are drawn after a later one's passing ones, as in PCSX2: breaking the
+//   batch wherever they might, each triangle of a mesh is a batch of its own); none when AFAIL writes all a pass writes
 // - 16 bit frames: the colour dithered (DIMX, at the PS2's pixel) and truncated to 5 bits a channel before it's written, the
 //   alpha its top bit (no blending into them: the blend would have to happen before the truncation)
 //
@@ -1284,9 +1286,8 @@ private:
     BatchKey key_ = {};
     bool batching_ = false;
     std::vector<HwVertex> vertexes_;
-    // A batch blended by the shader or drawn in two passes (a failed alpha test's AFAIL): its primitives' rectangles. One
-    // overlapping an earlier one starts a new batch: the destination copy is from before the batch, and the second pass draws
-    // the earlier primitive's failing pixels after the later one's passing pixels, where the GS draws them first
+    // A batch blended by the shader: its primitives' rectangles (one overlapping an earlier one starts a new batch, as the
+    // destination copy is from before the batch)
     std::vector<Rect> batchRects_;
     // Stencil buffers for the destination alpha test of draws without a depth buffer, by colour target
     std::map<Target*, std::unique_ptr<Target>> scratchStencils_;
@@ -4552,9 +4553,7 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         Flush();
     }
 
-    const bool twoPasses = key.alphaTested != 0 && state.atst != Gs::AtstNever && state.afail != Gs::AfailKeep;
-    const bool ordered = shaderBlend || twoPasses;
-    if (batching_ && ordered)
+    if (batching_ && shaderBlend)
     {
         for (const Rect& earlier : batchRects_)
         {
@@ -4594,7 +4593,7 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
 
     key_ = key;
     batching_ = true;
-    if (ordered)
+    if (shaderBlend)
     {
         batchRects_.push_back(rect);
     }
