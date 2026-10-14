@@ -234,7 +234,8 @@ static inline void ps2_sdr(Ps2Cpu* c, int rt, u32 a)
 void ps2_call(Ps2Cpu* c, u32 address);
 void ps2_syscall(Ps2Cpu* c, u32 pc);
 void ps2_break(Ps2Cpu* c, u32 pc);
-void ps2_eret(Ps2Cpu* c, u32 pc);
+// ERET: leaves the exception level (ERL first, else EXL) and gives the address to go on at (ErrorEPC or EPC)
+u32 ps2_eret(Ps2Cpu* c, u32 pc);
 u32 ps2_mfc0(Ps2Cpu* c, int reg);
 void ps2_mtc0(Ps2Cpu* c, int reg, u32 value);
 void ps2_ei(Ps2Cpu* c);

@@ -26,7 +26,7 @@ class Insn:
     bc: int = 0        # VU broadcast field
     fsf: int = 0
     ftf: int = 0
-    kind: str = ""     # "branch", "branch_likely", "jump", "call", "jr", "jalr", "syscall", "" (plain)
+    kind: str = ""     # "branch", "branch_likely", "jump", "call", "jr", "jalr", "syscall", "eret", "" (plain)
     link: bool = False
 
     def __repr__(self):
@@ -152,6 +152,8 @@ def decode(word, addr):
             i.target = (addr + 4 + (i.imm << 2)) & 0xFFFFFFFF
         elif rs == 16:
             i.name = {1: "tlbr", 2: "tlbwi", 6: "tlbwr", 8: "tlbp", 24: "eret", 56: "ei", 57: "di"}.get(funct, "unknown")
+            if i.name == "eret":
+                i.kind = "eret"
     elif op == 17:
         i.ft, i.fs, i.fd = rt, rd, sa
         if rs == 0:

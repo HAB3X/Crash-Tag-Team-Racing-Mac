@@ -70,6 +70,10 @@ code that jumps into an unrolled block (`lui`+`addi` base plus an index) gets ev
 - `JAL` is a C call; `JR RA` is `return`. `J`, branches and fall-through into another function are tail calls (`f(c); return;`).
   `JALR` and `JR` through other registers look the target up in the address table (`ps2_call`); a `JR` with a jump table is a
   `switch` first.
+- `ERET` is a jump to ErrorEPC (with ERL on) or EPC, which the runtime keeps from `MTC0`: back to the caller when that's the
+  return address in RA (Crash Tag Team Racing's libkernel writes timer 2 from kernel mode that way: ERL on, its return
+  address in ErrorEPC, the store, ERET), else to the function starting there. Status's EIE is EI and DI's, and interrupts
+  wait while its EXL or ERL is on.
 - Interrupts are taken at backward branches (`PS2_POLL`: one load and branch) and in the runtime's own calls.
 - Loads and stores go through inline functions: one compare sends 0x10000000-0x1FFFFFFF (the hardware registers) to the
   runtime, everything else is a single host load or store at `ps2_mem + address`.

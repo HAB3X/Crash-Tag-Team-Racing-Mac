@@ -48,10 +48,21 @@ extern "C" void ps2_break(Ps2Cpu* c, u32 pc)
     Log("break at %08x", pc);
 }
 
-extern "C" void ps2_eret(Ps2Cpu* c, u32 pc)
+namespace
 {
-    (void)c;
-    Fatal("eret at %08x", pc);
+// COP0's EPC and ErrorEPC: only a game's own kernel-mode code uses them (the HLE kernel takes exceptions itself)
+u32 g_epc = 0;
+u32 g_errorEpc = 0;
+}
+
+extern "C" u32 ps2_eret(Ps2Cpu* c, u32 pc)
+{
+    u32 status = KernelStatus();
+    bool error = (status & 4) != 0;
+    u32 target = error ? g_errorEpc : g_epc;
+    KernelSetStatus(c, status & ~(error ? 4u : 2u));
+    PS2_LOG(LogKernel, "eret at %08x to %08x (%s)", pc, target, error ? "ErrorEPC" : "EPC");
+    return target;
 }
 
 extern "C" u32 ps2_mfc0(Ps2Cpu* c, int reg)
@@ -61,12 +72,16 @@ extern "C" u32 ps2_mfc0(Ps2Cpu* c, int reg)
     {
     case 9: // Count: the core's clock, twice the bus's
         return static_cast<u32>(BusCycles() * 2);
-    case 12: // Status: kernel mode (the games' libraries read it there), IE, INT0 and INT1 on, EIE as EI and DI set it
-        return 0x70000C01 | (InterruptsEnabled() ? 0x10000u : 0);
+    case 12:
+        return KernelStatus();
+    case 14:
+        return g_epc;
     case 15: // PRId
         return 0x2E20;
     case 16: // Config
         return 0x440;
+    case 30:
+        return g_errorEpc;
     default:
         return 0;
     }
@@ -74,10 +89,22 @@ extern "C" u32 ps2_mfc0(Ps2Cpu* c, int reg)
 
 extern "C" void ps2_mtc0(Ps2Cpu* c, int reg, u32 value)
 {
-    (void)c;
-    if (Once("mtc0 " + std::to_string(reg)))
+    switch (reg)
     {
-        PS2_LOG(LogKernel, "mtc0 $%d = %08x", reg, value);
+    case 12:
+        KernelSetStatus(c, value);
+        return;
+    case 14:
+        g_epc = value;
+        return;
+    case 30:
+        g_errorEpc = value;
+        return;
+    default:
+        if (Once("mtc0 " + std::to_string(reg)))
+        {
+            PS2_LOG(LogKernel, "mtc0 $%d = %08x", reg, value);
+        }
     }
 }
 

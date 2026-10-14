@@ -187,6 +187,8 @@ class Program:
                         if t:
                             work.extend(x for x in t if start <= x < end)
                     break
+                if k == "eret":
+                    break  # a jump to EPC or ErrorEPC, with no delay slot
                 if k in ("call", "jalr"):
                     seen.add(a + 4)
                     a += 8
@@ -208,7 +210,7 @@ class Program:
         # next function) continues at a function start
         for a in seen:
             i = self.insn(a)
-            if i.kind in ("jump", "jr") or (i.kind in ("branch", "branch_likely") and not i.link and is_unconditional(i)):
+            if i.kind in ("jump", "jr", "eret") or (i.kind in ("branch", "branch_likely") and not i.link and is_unconditional(i)):
                 continue
             nxt = a + 8 if i.kind else a + 4
             if (a - 4) in seen and self.insn(a - 4).kind:

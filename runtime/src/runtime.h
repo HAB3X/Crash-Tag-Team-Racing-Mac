@@ -113,8 +113,11 @@ extern u32 g_dmacStat;
 u64 BusCycles();
 // Whether the guest is in an interrupt handler
 bool InInterrupt();
-// COP0 Status's EIE: EI and DI
-bool InterruptsEnabled();
+// COP0 Status as the game reads it: kernel mode, IE, INT0 and INT1 on, EIE as EI and DI set it, EXL and ERL as the game set them
+u32 KernelStatus();
+// Status written (MTC0): its EIE as EI or DI would set it, its EXL and ERL kept (interrupts wait while either is on); the rest
+// is the kernel's
+void KernelSetStatus(Ps2Cpu* c, u32 status);
 // The PC menus' pause: the game stops at its next poll point (and the timer makes no vblanks or alarms; its time stands still)
 // until it's let go
 void KernelPause(bool paused);

@@ -226,8 +226,6 @@ def emit_plain(i, ctx):
         return "ps2_ei(c);"
     if n == "di":
         return "ps2_di(c);"
-    if n == "eret":
-        return f"ps2_eret(c, 0x{i.addr:08x});"
     # --- COP1
     if n == "mfc1":
         return set32(rt, f"c->f[{i.fs}].u")
@@ -480,7 +478,7 @@ class FunctionEmitter:
 
     @staticmethod
     def ends_flow(i):
-        if i.kind == "jump" or i.kind == "jr":
+        if i.kind in ("jump", "jr", "eret"):
             return True
         if i.kind in ("branch", "branch_likely") and not i.link:
             from analysis import is_unconditional
@@ -552,4 +550,11 @@ class FunctionEmitter:
             return out
         if k == "syscall":
             return [emit_plain(i, None)]
+        if k == "eret":
+            # Back from kernel mode to the address in ErrorEPC or EPC: a game's own kernel-mode code (CTTR's libkernel puts its
+            # return address in ErrorEPC to write a timer with ERL set) goes back to its caller as JR RA would, or on to a
+            # function start
+            return [f"{{ u32 t = ps2_eret(c, 0x{i.addr:08x}u);",
+                    f"  if (t == {u32(31)}) return;",
+                    "  ps2_call(c, t); return; }"]
         raise ValueError(f"unhandled {i!r}")

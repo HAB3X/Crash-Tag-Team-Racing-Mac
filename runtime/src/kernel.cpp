@@ -120,6 +120,9 @@ int g_nextHandler = 1;
 std::vector<Alarm> g_alarms;
 int g_nextAlarm = 1;
 bool g_interruptsEnabled = true;
+// COP0 Status's EXL and ERL (bits 1 and 2), as the game's own kernel-mode code sets them (CTTR's libkernel writes timer 2 with
+// ERL on, then ERETs back): interrupts wait while either is on, as on the console
+u32 g_exceptionLevel = 0;
 int g_inInterrupt = 0;
 u32 g_heapEnd = 0;
 u32 g_mainStack = 0;
@@ -396,7 +399,7 @@ void ServiceLocked(std::unique_lock<std::mutex>& lock)
         lock.lock();
         g_intcStat |= 1u << 3;
     }
-    if (!g_interruptsEnabled || g_inInterrupt > 0)
+    if (!g_interruptsEnabled || g_exceptionLevel != 0 || g_inInterrupt > 0)
     {
         UpdatePending();
         return;
@@ -1029,7 +1032,7 @@ void KernelOnGameSide(std::function<void()> work)
 
 bool InInterrupt() { return g_inInterrupt > 0; }
 
-bool InterruptsEnabled() { return g_interruptsEnabled; }
+u32 KernelStatus() { return 0x70000C01 | (g_interruptsEnabled ? 0x10000u : 0) | g_exceptionLevel; }
 
 void KernelDumpThreads()
 {
@@ -1147,6 +1150,22 @@ extern "C" void ps2_di(Ps2Cpu* c)
 {
     (void)c;
     g_interruptsEnabled = false;
+}
+
+namespace Ps2
+{
+void KernelSetStatus(Ps2Cpu* c, u32 status)
+{
+    g_exceptionLevel = status & 6;
+    if (status & 0x10000)
+    {
+        ps2_ei(c);
+    }
+    else
+    {
+        ps2_di(c);
+    }
+}
 }
 
 extern "C" void ps2_syscall(Ps2Cpu* c, u32 pc)
