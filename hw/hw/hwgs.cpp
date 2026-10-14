@@ -4129,7 +4129,9 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
             Gs::PageSet texturePages;
             Gs::PagesOfRect(level.psm, level.bp, level.bw, left, top, right, bottom, texturePages);
             textureFromScaled = (texturePages & scaledPages_).any();
-            if (g_FilterMode >= 1)
+            // The filtering setting (the game's textures, not its buffers read as other texels: their neighbours are other
+            // pixels' bytes)
+            if (g_FilterMode >= 1 && !textureFromScaled)
             {
                 key.magFilter = GL_LINEAR;
                 key.minFilter = state.mipmapped ? (g_FilterMode == 2 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR_MIPMAP_NEAREST) : GL_LINEAR;
