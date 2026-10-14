@@ -74,8 +74,8 @@ extern const u32 ps2_function_count;
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Memory: the EE's 4 GB address space is a host reservation with main memory mapped at 0 and at its mirrors (0x20000000,
-// 0x30000000, 0x80000000, 0xA0000000) and the scratchpad at 0x70000000. The hardware registers (0x10000000-0x1FFFFFFF) go
-// through the runtime.
+// 0x30000000, 0x80000000, 0xA0000000) and the scratchpad at 0x70000000. The hardware registers (0x10000000-0x1FFFFFFF, and
+// their uncached mirror at 0xB0000000-0xBFFFFFFF, which some games use) go through the runtime.
 extern u8* ps2_mem;
 
 u8 ps2_io_read8(u32 a);
@@ -89,7 +89,8 @@ void ps2_io_write32(u32 a, u32 v);
 void ps2_io_write64(u32 a, u64 v);
 void ps2_io_write128(u32 a, u128 v);
 
-#define PS2_IS_IO(a) (((u32)(a) - 0x10000000u) < 0x10000000u)
+// The address's top four bits are 0x1 or 0xB (bits 1 and 11 of the mask)
+#define PS2_IS_IO(a) ((0x0802u >> ((u32)(a) >> 28)) & 1u)
 
 static inline u8 rd8(u32 a)
 {
