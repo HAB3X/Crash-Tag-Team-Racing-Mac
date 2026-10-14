@@ -91,7 +91,8 @@ struct VuMicroState
     u32 backupCycles = 0;
     u32 backupReg = 0;
     u16 backupValue = 0;
-    // The status flag when the program started, and whether an FMAC instruction has run since (for the translations)
+    // The status flag when the program started, its sticky bits FSSET's once one has run (the status the pipeline's entries
+    // carry), and whether an FMAC instruction has run since it started or since FSSET (for the translations)
     u32 startStatus = 0;
     bool anyEntry = false;
 };

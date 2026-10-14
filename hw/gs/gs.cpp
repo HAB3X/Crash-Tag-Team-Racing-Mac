@@ -52,6 +52,8 @@ void Gs::PrepareCpuRect(bool write, u32 psm, u32 bp, u32 bw, s32 left, s32 top, 
         PageSet full;
         FullPagesOfRect(psm, bp, bw, left, top, right, bottom, full);
         pages &= ~full;
+        backend_->BeforeCpuWriteRect(psm, bp, bw, left, top, right, bottom, pages, full);
+        return;
     }
 
     if (pages.none())
@@ -59,14 +61,7 @@ void Gs::PrepareCpuRect(bool write, u32 psm, u32 bp, u32 bw, s32 left, s32 top, 
         return;
     }
 
-    if (write)
-    {
-        backend_->BeforeCpuWrite(pages);
-    }
-    else
-    {
-        backend_->BeforeCpuRead(pages);
-    }
+    backend_->BeforeCpuReadRect(psm, bp, bw, left, top, right, bottom, pages);
 }
 
 template <typename Io>
@@ -592,14 +587,15 @@ void Gs::LoadClut(const RegTex0& tex0)
     if (backend_ != nullptr)
     {
         u32 clutPsm = thirtyTwo ? PSMCT32 : cpsm == PSMCT16S ? PSMCT16S : PSMCT16;
+        // The pixels the entries are read from (below): 16 by 16, or 8 by 2 for 16 entries; a line for CSM2
         if (tex0.csm == 0)
         {
-            PrepareCpuRect(false, clutPsm, tex0.cbp, 1, 0, 0, 15, 15, "CLUT");
+            PrepareCpuRect(false, clutPsm, tex0.cbp, 1, 0, 0, eightBit ? 15 : 7, eightBit ? 15 : 1, "CLUT");
         }
         else
         {
             s32 x = static_cast<s32>(texclut_.cou * 16);
-            PrepareCpuRect(false, clutPsm, tex0.cbp, texclut_.cbw, x, static_cast<s32>(texclut_.cov), x + 255,
+            PrepareCpuRect(false, clutPsm, tex0.cbp, texclut_.cbw, x, static_cast<s32>(texclut_.cov), x + static_cast<s32>(entries) - 1,
                            static_cast<s32>(texclut_.cov), "CLUT");
         }
     }

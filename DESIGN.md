@@ -184,6 +184,18 @@ Primitives that read the buffer they draw into (WoC's Warp Room draws about 300 
 batch began, as PCSX2's hardware renderers do, instead of a copy and two render passes each: the Warp Room went from 10-20
 frames a second at 3x to 60.
 
+WoC's levels blur the far scenery by its depth: the depth buffer is copied into another buffer's layout and read back as
+8 bit texels a pixel at a time (each a byte of another pixel), spread into a blur buffer's alpha by sprites that read the
+buffer they draw into, and blended over the frame by it. On the GPU that needs the GS's exact rules where upscaling would
+otherwise bend them: texel coordinates on the GS's side of a texel's edge, every sample of an upscaled target reading the
+texel its pixel's sample point reads and sprites covering whole pixels' blocks (data at the PS2's resolution read back from
+an upscaled target), no second pass for an alpha test whose failing pixels are written as passing ones, and no texture
+filtering setting on such data. The effect's buffers are the software GS's byte for byte, at 1x and 3x. Its cost was in
+render passes and waits for the GPU: a decode of the 8 bit view for each strip of the buffer drawn, and the textures uploaded
+each frame over the effect's buffers read back first. The views are decoded whole, a draw reading its own buffer reads the
+decode made when its batch began, and an upload over pages the GPU holds newer is put into memory's copy on the GPU
+(`MergeWrites`) instead of read back; Arctic Antics went from 11 frames a second to 60.
+
 A game that draws each field of an interlaced picture on its own (SMODE2's INT and FFMD; WoC does) moves its drawing half a
 line on every other field with XYOFFSET (the SDK's sceGsSetHalfOffset), for a TV that shows the fields half a line apart.
 Shown one field after another in the same place, the picture shook by half a line at 30 Hz: the GS drops that half line
@@ -208,7 +220,9 @@ flight: FMAC results and their flags, Q, ILW's results, the branch read rule's o
 timing are worked out at build time. `hw/ee/vu1translate.cpp` finds the program micro memory holds wherever it was uploaded,
 enters the variant made for the interpreter's state, and hands the state back where there's none; the interpreter runs the
 rest. The results are the interpreter's bit for bit: `PS2_VU1=verify` runs both and compares every XGKICK's packet, and
-`PS2_VU1=interpret` turns the translation off. For WoC: 16 programs, 9,184 instructions, 99.6% of those run translated.
+`PS2_VU1=interpret` turns the translation off. For WoC: 16 programs, 9,184 instructions, 99.6% of those run translated
+(99.8% in Arctic Antics, whose snow's program clears the status flag's sticky bits with FSSET and tests them with FSAND: both
+translated where the translation's sticky bits are the interpreter's, `Sim.ready_for`).
 
 ### Controllers and memory cards
 

@@ -93,6 +93,7 @@ struct Gl
     void (*Uniform2f)(GLint, GLfloat, GLfloat);
     void (*Uniform3f)(GLint, GLfloat, GLfloat, GLfloat);
     void (*Uniform4f)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
+    void (*Uniform4i)(GLint, GLint, GLint, GLint, GLint);
     void (*Uniform1iv)(GLint, GLsizei, const GLint*);
     void (*GenVertexArrays)(GLsizei, GLuint*);
     void (*BindVertexArray)(GLuint);

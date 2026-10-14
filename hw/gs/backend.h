@@ -43,6 +43,24 @@ public:
     // Local memory's pages about to be read, or written, by the CPU side: made current
     virtual void BeforeCpuRead(const PageSet& pages) = 0;
     virtual void BeforeCpuWrite(const PageSet& pages) = 0;
+    // A rectangle of a buffer about to be written by the CPU side (a transfer): the pages it writes part of (pages) and whole
+    // (full). A backend that can put the rectangle's pixels into its newer copies of the pages needn't make them current
+    // A rectangle of a buffer about to be read by the CPU side: a backend that knows local memory has those pixels right (the
+    // CPU wrote them) needn't make the pages current
+    virtual void BeforeCpuReadRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bottom, const PageSet& pages)
+    {
+        (void)psm, (void)bp, (void)bw, (void)left, (void)top, (void)right, (void)bottom;
+        BeforeCpuRead(pages);
+    }
+    virtual void BeforeCpuWriteRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bottom, const PageSet& pages,
+                                    const PageSet& full)
+    {
+        (void)psm, (void)bp, (void)bw, (void)left, (void)top, (void)right, (void)bottom, (void)full;
+        if (pages.any())
+        {
+            BeforeCpuWrite(pages);
+        }
+    }
     // Why the next CPU access happens (statistics)
     const char* cpuReason = "";
     // Everything queued drawn
