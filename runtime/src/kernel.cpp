@@ -503,8 +503,24 @@ void TimerThread()
     for (;;)
     {
         next += std::chrono::nanoseconds(static_cast<long long>(1e9 / g_vblankRate));
-        // Sleep until the vblank, waking for alarms on the way
-        std::this_thread::sleep_until(next);
+        // Sleep until the vblank, waking for the timers' events on the way (alarms are seen at the vblank)
+        for (;;)
+        {
+            u64 event = IoTimerEvents();
+            auto now = clock::now();
+            if (now >= next)
+            {
+                break;
+            }
+            auto until = next;
+            u64 cycles = BusCycles();
+            if (event != ~0ull)
+            {
+                auto wait = std::chrono::nanoseconds(event > cycles ? static_cast<long long>((event - cycles) / 0.147456) : 0);
+                until = std::min(next, now + std::max(wait, std::chrono::nanoseconds(100000)));
+            }
+            std::this_thread::sleep_until(until);
+        }
         {
             std::unique_lock<std::mutex> lock(g_lock);
             if (g_pauseWanted)

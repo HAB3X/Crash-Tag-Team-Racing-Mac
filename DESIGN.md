@@ -101,7 +101,9 @@ frames are named by guest address). Kernel memory below 0x00080000 is ordinary R
 
 ### Hardware registers (`io.cpp`, `dmac.cpp`, `gs.cpp`)
 
-- Timers T0-T3 from the host clock (bus clock 147.456 MHz and its dividers, hblank).
+- Timers T0-T3 from the host clock (bus clock 147.456 MHz and its dividers, hblank), with ZRET; reaching COMP and overflowing
+  set MODE's flags (cleared by writing ones) and raise the INTC's timer causes where MODE asks, the kernel's timer thread waking
+  for the next one (libkernel 2.7's system time counts timer 2's overflows: CTTR's legal screen waited on it forever).
 - DMAC: all ten channels, normal, chain (CNT, NEXT, REF, REFS, REFE, CALL, RET, END, the two-entry address stack, TTE, the
   tag IRQ with TIE) and interleave (SPR) modes; D_CTRL, D_STAT (clear/toggle semantics), D_PCR, D_SQWC. A transfer runs to its
   end when CHCR.STR is written, then the channel's interrupt is raised. VIF0/VIF1/GIF go to the hardware layer; the SIF

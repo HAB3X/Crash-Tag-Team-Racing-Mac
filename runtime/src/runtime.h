@@ -127,6 +127,10 @@ void KernelOnGameSide(std::function<void()> work);
 
 // --- io.cpp
 void IoInit();
+// The timers' events since the last call (COMP reached, overflow): their MODE flags set, and where MODE asks, the INTC's timer
+// cause (9-12) raised. Returns the bus cycle of the next event (~0: none), for the kernel's timer thread to wake at. Several
+// events of one timer between two calls raise one interrupt
+u64 IoTimerEvents();
 
 // --- dmac.cpp
 void DmacInit();

@@ -5,19 +5,24 @@
 #include "../../hw/ee/gif.h"
 #include "../../hw/ee/vif.h"
 
+#include <mutex>
+
 namespace Ps2
 {
 namespace
 {
 struct Timer
 {
-    u32 mode = 0;
+    u32 mode = 0;    // MODE's settings (bits 0-9)
+    u32 flags = 0;   // MODE's EQUF and OVFF (bits 10 and 11): set by the events, cleared by writing ones
     u32 comp = 0;
     u32 hold = 0;
     u64 base = 0;    // bus cycle the count started from
     u32 start = 0;   // the count written
+    u64 seen = 0;    // the ticks since base whose events have been raised
 };
 Timer g_timers[4];
+std::mutex g_timerLock;
 
 u64 TimerDivider(u32 mode)
 {
@@ -30,6 +35,11 @@ u64 TimerDivider(u32 mode)
     }
 }
 
+// The count wraps at 0x10000, or with ZRET at COMP + 1 (it goes back to 0 from COMP)
+u64 TimerPeriod(const Timer& t) { return (t.mode & 0x40) != 0 && t.comp != 0 ? t.comp + 1 : 0x10000; }
+
+u64 TimerTicks(const Timer& t) { return (BusCycles() - t.base) / TimerDivider(t.mode); }
+
 u32 TimerCount(int n)
 {
     Timer& t = g_timers[n];
@@ -37,7 +47,39 @@ u32 TimerCount(int n)
     {
         return t.start;
     }
-    return static_cast<u32>((t.start + (BusCycles() - t.base) / TimerDivider(t.mode)) & 0xFFFF);
+    return static_cast<u32>((t.start + TimerTicks(t)) % TimerPeriod(t));
+}
+
+// The first tick after `after` at which the count is `value` (counting from the start), or ~0 for never
+u64 TickOfCount(const Timer& t, u32 value, u64 after)
+{
+    u64 period = TimerPeriod(t);
+    if (value >= period)
+    {
+        return ~0ull;
+    }
+    u64 first = (value + period - t.start % period) % period;
+    if (first <= after)
+    {
+        first += ((after - first) / period + 1) * period;
+    }
+    return first;
+}
+
+// The ticks of the timer's next events (reaching COMP, overflowing) after `after`, those its MODE asks interrupts for
+u64 NextEventTick(const Timer& t, u64 after)
+{
+    u64 next = ~0ull;
+    if (t.mode & 0x100)
+    {
+        next = std::min(next, TickOfCount(t, t.comp, after));
+    }
+    if ((t.mode & 0x200) && TimerPeriod(t) == 0x10000)
+    {
+        // The overflow: the count back to 0 from 0xFFFF
+        next = std::min(next, TickOfCount(t, 0, after));
+    }
+    return next;
 }
 
 std::string g_sioLine;
@@ -50,7 +92,7 @@ u32 Read32Io(u32 a)
         switch (a & 0x7F0)
         {
         case 0x00: return TimerCount(n);
-        case 0x10: return g_timers[n].mode;
+        case 0x10: return g_timers[n].mode | g_timers[n].flags;
         case 0x20: return g_timers[n].comp;
         case 0x30: return g_timers[n].hold;
         }
@@ -132,14 +174,23 @@ void Write32Io(u32 a, u32 v)
         switch (a & 0x7F0)
         {
         case 0x00:
+        {
+            std::lock_guard<std::mutex> lock(g_timerLock);
             t.start = v & 0xFFFF;
             t.base = BusCycles();
+            t.seen = 0;
             return;
+        }
         case 0x10:
+        {
+            std::lock_guard<std::mutex> lock(g_timerLock);
             t.start = TimerCount(n);
             t.base = BusCycles();
+            t.seen = 0;
             t.mode = v & 0x3FF;
+            t.flags &= ~(v & 0xC00);
             return;
+        }
         case 0x20:
             t.comp = v & 0xFFFF;
             return;
@@ -232,6 +283,53 @@ void WriteFifo(u32 a, u128 v)
 }
 
 void IoInit() {}
+
+u64 IoTimerEvents()
+{
+    u64 next = ~0ull;
+    std::vector<u32> causes;
+    {
+        std::lock_guard<std::mutex> lock(g_timerLock);
+        u64 now = BusCycles();
+        for (u32 n = 0; n < 4; n++)
+        {
+            Timer& t = g_timers[n];
+            if (!(t.mode & 0x80))
+            {
+                continue;
+            }
+            u64 divider = TimerDivider(t.mode);
+            u64 ticks = (now - t.base) / divider;
+            // An event sets its flag; the interrupt comes as the flag goes from 0 to 1, where MODE asks for it
+            bool interrupt = false;
+            if (TickOfCount(t, t.comp, t.seen) <= ticks)
+            {
+                interrupt |= (t.mode & 0x100) != 0 && !(t.flags & 0x400);
+                t.flags |= 0x400;
+            }
+            if (TimerPeriod(t) == 0x10000 && TickOfCount(t, 0, t.seen) <= ticks)
+            {
+                interrupt |= (t.mode & 0x200) != 0 && !(t.flags & 0x800);
+                t.flags |= 0x800;
+            }
+            t.seen = ticks;
+            if (interrupt)
+            {
+                causes.push_back(9 + n);
+            }
+            u64 event = NextEventTick(t, ticks);
+            if (event != ~0ull)
+            {
+                next = std::min(next, t.base + event * divider);
+            }
+        }
+    }
+    for (u32 cause : causes)
+    {
+        RaiseIntc(cause);
+    }
+    return next;
+}
 }
 
 using namespace Ps2;
