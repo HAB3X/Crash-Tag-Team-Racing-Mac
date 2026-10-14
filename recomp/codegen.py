@@ -411,12 +411,13 @@ def branch_condition(i):
 
 
 class FunctionEmitter:
-    def __init__(self, program, start, end, names, overrides):
+    def __init__(self, program, start, end, names, overrides, setjmps=frozenset()):
         self.p = program
         self.start = start
         self.end = end
         self.names = names            # address -> C name of every function (overrides already applied)
         self.overrides = overrides
+        self.setjmps = setjmps        # the game's setjmp functions (the config's)
 
     def inside(self, a):
         return self.start <= a < self.end
@@ -528,7 +529,12 @@ class FunctionEmitter:
         if k == "jump":
             return self.delay(i) + [self.goto_or_tail(i.target)]
         if k == "call":
-            return self.delay(i) + [f"c->r[31].sd[0] = (s32)0x{i.addr + 8:08x}u;", self.call_expr(i.target)]
+            call = self.call_expr(i.target)
+            if i.target in self.setjmps:
+                # The host's place is kept here, in the caller's frame, for longjmp to come back to (ps2_longjmp); the game's
+                # setjmp keeps the registers
+                call = f"if (_setjmp(*ps2_setjmp_buffer(c, {u32(4)})) == 0) {call}"
+            return self.delay(i) + [f"c->r[31].sd[0] = (s32)0x{i.addr + 8:08x}u;", call]
         if k == "jr":
             if i.rs == 31:
                 return self.delay(i) + ["return;"]
