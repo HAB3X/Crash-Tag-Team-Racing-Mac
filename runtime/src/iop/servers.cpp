@@ -416,8 +416,8 @@ void Cdvd(RpcCall& c)
             c.Out32(0, 1);
             return;
         }
-        case 0x0E: // the drive's state before a read (6 would stop it): a PS2 CD's
-            c.Out32(0, 0x12);
+        case 0x0E: // the disc's type again, before a read (6 would stop it): as the S command's
+            c.Out32(0, DiscIsDvd() ? 0x14 : 0x12);
             return;
         default:
             break;
@@ -426,8 +426,8 @@ void Cdvd(RpcCall& c)
     case 0x80000593: // S commands
         switch (c.fno)
         {
-        case 0x03: // disk type: a PlayStation 2 CD
-            c.Out32(0, 0x12);
+        case 0x03: // disk type: a PlayStation 2 DVD (SCECdPS2DVD) or CD (SCECdPS2CD)
+            c.Out32(0, DiscIsDvd() ? 0x14 : 0x12);
             return;
         case 0x04: // the last command's error: none
             c.Out32(0, 0);

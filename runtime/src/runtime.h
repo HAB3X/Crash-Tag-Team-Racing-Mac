@@ -285,6 +285,8 @@ std::string InputPrompt();
 
 // --- disc.cpp
 bool DiscOpen(const std::string& path);
+// Whether the disc is a DVD (UDF's volume recognition on it, as a PlayStation 2 DVD has), not a CD
+bool DiscIsDvd();
 // A file on the disc by its ISO 9660 path ("\\SYS\\LIBSD.IRX;1" or "/SYS/LIBSD.IRX"): its first sector and size
 bool DiscFind(const std::string& path, u32& lsn, u32& size);
 bool DiscReadSectors(u32 lsn, u32 count, u8* out);
