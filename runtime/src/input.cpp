@@ -16,6 +16,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -118,6 +119,9 @@ SDL_FRect g_picture = {0, 0, 0, 0};
 float g_mouseX = -1, g_mouseY = -1;
 bool g_mouseMoved = false;
 std::vector<std::pair<float, float>> g_clicks;
+// Whether any of the player's buttons (or the left stick) was held at the last update, and the prompt over the picture
+std::atomic<bool> g_anyHeld{false};
+std::string g_prompt;
 std::mutex g_typedLock;
 std::string g_typed;
 // Buttons the game's side pressed itself (ps2_press_buttons): asked for, then held until a time
@@ -509,6 +513,7 @@ void InputUpdate(double t, SDL_Window* window)
             }
         }
     }
+    g_anyHeld = pressed != 0 || out[2] != 0x80 || out[3] != 0x80;
     PadSetInput(0, pressed, out);
 }
 }
@@ -521,6 +526,17 @@ extern "C" void ps2_press_buttons(uint32_t buttons, double seconds)
     g_synthAsked = buttons;
     g_synthFor = seconds;
 }
+
+extern "C" int ps2_any_input_held(void) { return g_anyHeld ? 1 : 0; }
+
+// The PC menus (the overlay) draw the prompt and say when they're up; until they're there, the prompt is only kept
+extern "C" void ps2_show_prompt(const char* text)
+{
+    std::lock_guard<std::mutex> lock(g_typedLock);
+    g_prompt = text != nullptr ? text : "";
+}
+
+extern "C" int ps2_menus_open(void) { return 0; }
 
 extern "C" int ps2_mouse_moved(float* x, float* y)
 {
