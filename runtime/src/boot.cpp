@@ -4,7 +4,11 @@
 
 #include "ps2/runtime.h"
 
+#include <SDL3/SDL.h>
+
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <thread>
 #include <unistd.h>
 
@@ -31,6 +35,54 @@ void Usage(const char* program)
             "          [--type S:TEXT] [--click S:X,Y]\n"
             "          [--fps] [--gs hardware|software] [--scale 1-8] [--texture-upscale 0|2|4] [--mute] [--audio-dump FILE.wav]\n",
             program);
+}
+
+// The disc image asked for with the system's file dialog (the first run of an app); empty if none was chosen
+std::string AskForDisc(const Ps2GameInfo* game)
+{
+    if (!SDL_Init(SDL_INIT_VIDEO))
+    {
+        return "";
+    }
+    std::string message = std::string("Choose your disc image of ") + game->title + " (" + game->executable +
+                          "): an .iso, or a .cue/.bin.";
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, WindowTitle().c_str(), message.c_str(), nullptr);
+    struct Pick
+    {
+        bool done = false;
+        std::string path;
+    } pick;
+    static const SDL_DialogFileFilter filters[] = {{"PS2 disc image", "iso;cue;bin;img"}, {"Any file", "*"}};
+    SDL_ShowOpenFileDialog(
+        [](void* user, const char* const* files, int) {
+            auto* result = static_cast<Pick*>(user);
+            if (files != nullptr && files[0] != nullptr)
+            {
+                result->path = files[0];
+            }
+            result->done = true;
+        },
+        &pick, nullptr, filters, 2, nullptr, false);
+    while (!pick.done)
+    {
+        SDL_Event event;
+        SDL_WaitEventTimeout(&event, 50);
+    }
+    return pick.path;
+}
+
+// A disc that isn't the game's: said in a window when it was just chosen (and forgotten, to be asked for again)
+void WrongDisc(const Ps2GameInfo* game, bool asked, const std::string& discFile)
+{
+    if (!asked)
+    {
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::remove(discFile, ec);
+    std::string message = std::string("That isn't ") + game->title + " (" + game->executable +
+                          "). Open the app again to choose your disc image.";
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, WindowTitle().c_str(), message.c_str(), nullptr);
 }
 
 u32 ParseLog(const std::string& list)
@@ -264,25 +316,52 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
             return 2;
         }
     }
+    g_logMask = g_options.logMask;
+    g_game = game;
+    // ~/Library/Application Support/<the game's folder>/: the settings, the disc's path, and the memory cards in memcards/.
+    // A game that names its folder takes over the runtime's default one (PS2 Native Runtime/<executable>) if it's there
+    const char* home = getenv("HOME");
+    std::string support = std::string(home != nullptr ? home : ".") + "/Library/Application Support/";
+    std::string fallback = support + "PS2 Native Runtime/" + game->executable;
+    g_options.settingsDir = game->folder != nullptr ? support + game->folder : fallback;
+    {
+        std::error_code ec;
+        if (game->folder != nullptr && !std::filesystem::exists(g_options.settingsDir, ec) &&
+            std::filesystem::is_directory(fallback, ec))
+        {
+            std::filesystem::rename(fallback, g_options.settingsDir, ec);
+            Log("settings moved to %s", g_options.settingsDir.c_str());
+        }
+        std::filesystem::create_directories(g_options.settingsDir, ec);
+    }
+    // The disc: --disc, $PS2_DISC, the one chosen before (disc_image.txt), or (with a window) asked for
+    const std::string discFile = g_options.settingsDir + "/disc_image.txt";
+    if (g_options.disc.empty() && getenv("PS2_DISC") != nullptr)
+    {
+        g_options.disc = getenv("PS2_DISC");
+    }
     if (g_options.disc.empty())
     {
-        const char* env = getenv("PS2_DISC");
-        if (env != nullptr)
+        std::ifstream remembered(discFile);
+        std::getline(remembered, g_options.disc);
+        std::error_code ec;
+        if (!g_options.disc.empty() && !std::filesystem::exists(g_options.disc, ec))
         {
-            g_options.disc = env;
+            Log("the disc image %s isn't there any more", g_options.disc.c_str());
+            g_options.disc.clear();
         }
+    }
+    bool asked = false;
+    if (g_options.disc.empty() && !g_options.headless)
+    {
+        g_options.disc = AskForDisc(game);
+        asked = true;
     }
     if (g_options.disc.empty())
     {
         Usage(argv[0]);
         return 2;
     }
-    g_logMask = g_options.logMask;
-    g_game = game;
-    // ~/Library/Application Support/PS2 Native Runtime/<the executable>/: the settings, and the memory cards in memcards/
-    const char* home = getenv("HOME");
-    g_options.settingsDir =
-        std::string(home != nullptr ? home : ".") + "/Library/Application Support/PS2 Native Runtime/" + game->executable;
     if (g_options.memcardDir.empty())
     {
         g_options.memcardDir = g_options.settingsDir + "/memcards";
@@ -291,6 +370,7 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
     MemoryInit();
     if (!DiscOpen(g_options.disc))
     {
+        WrongDisc(game, asked, discFile);
         return 1;
     }
     std::vector<u8> cnf;
@@ -311,6 +391,7 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
             if (path != game->executable)
             {
                 Log("this disc boots %s; this build is for %s (%s)", path.c_str(), game->executable, game->title);
+                WrongDisc(game, asked, discFile);
                 return 1;
             }
         }
@@ -325,7 +406,12 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
     {
         Log("%s is %zu bytes; this build is for the %u byte one (%s)", boot.c_str(), elf.size(), game->executableSize,
             game->title);
+        WrongDisc(game, asked, discFile);
         return 1;
+    }
+    if (asked)
+    {
+        std::ofstream(discFile) << g_options.disc << '\n';
     }
     g_entryPoint = LoadElf(elf);
     if (game->init != nullptr)

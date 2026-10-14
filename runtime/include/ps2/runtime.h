@@ -45,6 +45,9 @@ typedef struct Ps2GameInfo
     int settingCount;
     const Ps2GameAction* actions;
     int actionCount;
+    // Optional. The settings folder's name in ~/Library/Application Support (the saves, the options, the disc's path);
+    // NULL: "PS2 Native Runtime/<executable>"
+    const char* folder;
 } Ps2GameInfo;
 
 // A prompt shown over the picture (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down. Any thread
