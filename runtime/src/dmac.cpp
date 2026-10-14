@@ -22,6 +22,9 @@ struct Channel
     u32 sadr = 0;
     // A chain stopped by its VIF's stall: the tag whose data is left (MADR, QWC) ends it
     bool chainEnds = false;
+    // Started (STR) while D_CTRL's DMAE was off: it begins when DMAE is set; and whether it had begun already (it goes on then)
+    bool deferred = false;
+    bool begun = false;
 };
 
 // What a chain's run came to: its end, the MFIFO's drain waiting for fromSPR, or its VIF stalled at a code's interrupt bit
@@ -36,7 +39,8 @@ enum class Run
 std::vector<u32> g_vifHeld[2];
 
 Channel g_ch[10];
-u32 g_ctrl = 0;
+// D_CTRL: DMAE on, as the kernel leaves it (CTTR starts its first transfers before it writes D_CTRL)
+u32 g_ctrl = 1;
 u32 g_pcr = 0;
 u32 g_sqwc = 0;
 u32 g_rbor = 0;
@@ -447,6 +451,12 @@ void Finish(int ch)
 void Continue(int ch)
 {
     Channel& c = g_ch[ch];
+    if (!(g_ctrl & 1))
+    {
+        // The DMAC is off: the transfer stands still until DMAE is set again
+        c.deferred = true;
+        return;
+    }
     if (ch <= 1 && (ch == 0 ? Hw().vif0 : Hw().vif1)->stalled())
     {
         return;
@@ -468,11 +478,18 @@ void Start(int ch)
     Channel& c = g_ch[ch];
     u32 mode = (c.chcr >> 2) & 3;
     PS2_LOG(LogDma, "DMA %s start chcr %08x madr %08x qwc %x tadr %08x", ChannelName(ch), c.chcr, c.madr, c.qwc, c.tadr);
+    c.chainEnds = false;
+    c.begun = false;
     if (!(g_ctrl & 1))
     {
-        // The DMAC is off: the transfer waits (it never starts here)
-        PS2_LOG(LogDma, "DMA %s started with the DMAC off", ChannelName(ch));
+        // The DMAC is off (D_CTRL's DMAE): the transfer begins when it's set (CTTR re-arms its MFIFO's drain this way: VIF1
+        // started, then its TADR and fromSPR's MADR put back at the ring's start, then DMAE; begun at once, the drain would
+        // run the frame it had already drained again)
+        PS2_LOG(LogDma, "DMA %s started with the DMAC off: it waits for DMAE", ChannelName(ch));
+        c.deferred = true;
+        return;
     }
+    c.begun = true;
     if (ch == 5 || ch == 6 || ch == 7)
     {
         // The SIF's channels are the kernel's and the IOP's (sif.cpp); started directly they finish at once
@@ -503,7 +520,6 @@ void Start(int ch)
         else
         {
             // A chain started with data left over first sends it (MADR, QWC) then goes on at TADR
-            c.chainEnds = false;
             Continue(ch);
             return;
         }
@@ -585,9 +601,33 @@ void DmacWrite(u32 a, u32 v)
         switch (a)
         {
         case 0x1000E000:
+        {
             PS2_LOG(LogDma, "D_CTRL = %08x", v);
+            bool enabled = !(g_ctrl & 1) && (v & 1);
             g_ctrl = v;
+            if (enabled)
+            {
+                // DMAE set: the transfers that waited for it begin, or go on, in the channels' order
+                for (int ch = 0; ch < 10; ch++)
+                {
+                    Channel& c = g_ch[ch];
+                    if (c.deferred && (c.chcr & 0x100))
+                    {
+                        c.deferred = false;
+                        if (c.begun)
+                        {
+                            Continue(ch);
+                        }
+                        else
+                        {
+                            Start(ch);
+                        }
+                    }
+                    c.deferred = false;
+                }
+            }
             return;
+        }
         case 0x1000E010:
             // The status bits are cleared by ones, the masks toggled by ones
             g_dmacStat &= ~(v & 0xFFFF);
