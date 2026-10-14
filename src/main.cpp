@@ -2,9 +2,14 @@
 #include "ps2/runtime.h"
 
 void CttrRegisterRadIop();
+void CttrRegisterAudio();
 
-// Before the boot: the game's own IOP modules (src/radiop.cpp: Bink's)
-static void CttrInit() { CttrRegisterRadIop(); }
+// Before the boot: the game's own IOP modules (src/radiop.cpp: Bink's; src/audio.cpp: Radical's audio)
+static void CttrInit()
+{
+    CttrRegisterRadIop();
+    CttrRegisterAudio();
+}
 
 int main(int argc, char** argv)
 {
