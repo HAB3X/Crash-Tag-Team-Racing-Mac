@@ -1131,6 +1131,8 @@ struct GpuTexture
     // Shown from the content cache: good while every page is older than this and no target holds a newer copy (0: not)
     u32 contentEpoch = 0;
     std::vector<u16> pageList;
+    // The batch its tiles were last decoded for (HwGs::batchSerial_)
+    u64 decodedBatch = 0;
 };
 
 // A texture's content decoded once (the game streams its textures through the same places of GS memory every frame): by the
@@ -1379,7 +1381,11 @@ private:
     u32 stagingNext_ = 0;
     // Replacement images' textures, made once each
     std::map<NativeGraphics::ReplacementKey, GLuint> replacementTextures_;
-    GLuint DecodeOnGpu(const Gs::Gs::DrawState& state, s32 left, s32 top, s32 right, s32 bottom);
+    GLuint DecodeOnGpu(const Gs::Gs::DrawState& state, s32 left, s32 top, s32 right, s32 bottom, Target* drawing);
+    // Counts the batches (each Flush ends one), and whether the draw being set up reads a texture as it was decoded when the
+    // batch began (decoded again if the batch ends before the draw joins it)
+    u64 batchSerial_ = 1;
+    bool readsBatchStart_ = false;
     void DecodePasses(const Gs::Gs::DrawState& state, GLuint texture, const Rect* rects, u32 levels);
     u64 ContentHash(const Gs::Gs::DrawState& state);
     GLuint MakeLevels(const Gs::Gs::DrawState& state);
@@ -2056,7 +2062,7 @@ void HwGs::InitMemory()
     }
 }
 
-GLuint HwGs::DecodeOnGpu(const Gs::Gs::DrawState& state, s32 left, s32 top, s32 right, s32 bottom)
+GLuint HwGs::DecodeOnGpu(const Gs::Gs::DrawState& state, s32 left, s32 top, s32 right, s32 bottom, Target* drawing)
 {
     const Gs::RegTex0& tex0 = state.context->tex0;
     const Gs::TextureLevel& base = state.levels[0];
@@ -2217,6 +2223,35 @@ GLuint HwGs::DecodeOnGpu(const Gs::Gs::DrawState& state, s32 left, s32 top, s32 
         }
     };
     findStale();
+    // A texture over the target the batch draws into (a draw reading its own buffer as other texels, a strip a primitive),
+    // decoded when the batch began and changed since only by the batch's drawing: read as it was then, as the batch's
+    // primitives read a texture that is the target in its own layout (selfCopy_). Decoded again for each primitive, each would
+    // end the batch and take a pass to bring memory's copy up to date and another to decode
+    if (anyStale && batching_ && drawing != nullptr && key_.colour == drawing && t.decodedBatch == batchSerial_ && !ExactFeedback())
+    {
+        bool batchOnly = true;
+        for (u32 i = 0; i < t.levelCount && batchOnly; i++)
+        {
+            GpuTexture::Level& L = t.levels[i];
+            for (s32 ty = want[i].top / 8; ty <= want[i].bottom / 8 && batchOnly; ty++)
+            {
+                for (s32 tx = want[i].left / 8; tx <= want[i].right / 8 && batchOnly; tx++)
+                {
+                    u32 tile = static_cast<u32>(ty) * L.tilesWide + static_cast<u32>(tx);
+                    u32 page = L.tilePage[tile];
+                    batchOnly = L.tileEpoch[tile] != 0 && L.tileEpoch[tile] > pageEpoch_[page] &&
+                                (!newestMask_.test(page) || newest_[page] == drawing);
+                }
+            }
+        }
+
+        if (batchOnly)
+        {
+            readsBatchStart_ = true;
+            return t.shown;
+        }
+    }
+
     // A big texture read from a render target a piece at a time (the effects' strips): the whole of it decoded at once,
     // so the next pieces find it decoded. Also once the target's pages are in memory's copy: another texture over them (the
     // same buffer with the next CLUT) would be decoded a piece a draw, each a pass of its own between the draws' passes
@@ -2331,6 +2366,7 @@ GLuint HwGs::DecodeOnGpu(const Gs::Gs::DrawState& state, s32 left, s32 top, s32 
         }
 
         stats.decodes++;
+        t.decodedBatch = batchSerial_;
     }
 
     // A replacement looked for when it's decoded whole from data the CPU wrote (render targets' textures aren't replaced,
@@ -3998,6 +4034,8 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
 
     // The texture (selfRead: the target's own copy)
     bool selfRead = false;
+    readsBatchStart_ = false;
+    Rect decodeRect = {};
     u32 program = 0;
     bool textureFromScaled = false;
     GLuint texture = 0;
@@ -4129,7 +4167,8 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         else if (level.cacheId == nullptr && !cpuTextures)
         {
             // Decoded on the GPU from memory's copy
-            texture = DecodeOnGpu(state, left, top, right, bottom);
+            decodeRect = {left, top, right, bottom};
+            texture = DecodeOnGpu(state, left, top, right, bottom, colour);
             // Decoded from memory read back from an upscaled target: its texels are the blocks' first samples
             Gs::PageSet texturePages;
             Gs::PagesOfRect(level.psm, level.bp, level.bw, left, top, right, bottom, texturePages);
@@ -4527,6 +4566,13 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         selfCopy_ = key.texture;
     }
 
+    if (readsBatchStart_ && !batching_)
+    {
+        // The batch whose start's decode it was going to read was drawn first: decoded again with that batch's drawing
+        readsBatchStart_ = false;
+        key.texture = DecodeOnGpu(state, decodeRect.left, decodeRect.top, decodeRect.right, decodeRect.bottom, colour);
+    }
+
     static const char* tracePrim = std::getenv("TWIN_HW_TRACE_PRIM");
     if (tracePrim != nullptr && std::strtoull(tracePrim, nullptr, 10) == gs_.primitivesDrawn)
     {
@@ -4714,6 +4760,7 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
 void HwGs::Flush()
 {
     selfCopyFor_ = nullptr;
+    batchSerial_++;
     if (!batching_ || vertexes_.empty())
     {
         batching_ = false;
