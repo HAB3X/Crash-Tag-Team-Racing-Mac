@@ -114,7 +114,8 @@ frames are named by guest address). Kernel memory below 0x00080000 is ordinary R
 - INTC: I_STAT, I_MASK; causes raised by the GS (SIGNAL, FINISH, VSINT), the vblank timer, the DMAC and the VIFs.
 - A VIF code's interrupt bit stalls the VIF once the code is done and raises its INTC cause: the DMA transfer feeding it stops
   where it is (still busy; the words of a quadword it didn't take wait in its FIFO) until the game cancels the stall
-  (VIFn_FBRST's STC), then goes on. VIFn_STAT shows the stall, VIFn_CODE the last code. CTTR's renderer uploads each texture
+  (VIFn_FBRST's STC), then goes on. VIFn_STAT shows the stall, VIFn_MARK the MARK code's value (or the EE's own), VIFn_CODE the
+  last code. CTTR's renderer uploads each texture
   from its VIF1 interrupt handler, between the draws that need it.
 - GS privileged registers: PMODE, SMODE1/2, DISPFB, DISPLAY, BGCOLOR, CSR (FIELD toggling per vblank, VSINT, FINISH, SIGNAL),
   IMR, SIGLBLID; drawing goes through the GIF to the hardware layer's GS.
