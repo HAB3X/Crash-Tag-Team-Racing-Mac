@@ -313,8 +313,9 @@ and 4x, the CRT filter, v-sync; a change of the window asks to be kept, going ba
 in the background), Controls (the button prompts' style, what a gamepad's Back is, every action of bindings.txt with its two
 keys rebindable by key or mouse button and the gamepad's control shown), then the game's own tabs. A game's settings and actions
 (`ps2/runtime.h`) join the tabs they name. Cmd+F and Alt+Enter switch fullscreen at any time. A game that keeps its own pause
-menu (`Ps2GameInfo::ownPause`) has no pause menu of the runtime's: the menu key is its Start, a gamepad's Back its Select, the
-game opens the Options itself (`ps2_open_settings`, e.g. from its own options menu) with an Extras tab for its Extras and pause
+menu (`Ps2GameInfo::ownPause`) has no pause menu of the runtime's: the menu key is its Start (or what the game's `menuKeyPress`
+says it presses now: Crash Tag Team Racing's frontend menus take Start as a choice, so there it's their back), a gamepad's Back
+its Select, the game opens the Options itself (`ps2_open_settings`, e.g. from its own options menu) with an Extras tab for its Extras and pause
 actions, going back from them goes back to the game, and the game just waits while the window isn't in front.
 
 - The pause: `KernelPause` stops the thread holding the processor at its next poll point (it waits in the kernel's service,

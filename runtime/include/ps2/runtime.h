@@ -85,6 +85,11 @@ typedef struct Ps2GameInfo
     const char* const* modes;
     int modeCount;
     int (*mode)(void);
+    // Optional, with ownPause: what the menu key presses now, as a control's press names it ("triangle"), for a game whose
+    // Start isn't a way out everywhere (Crash Tag Team Racing's frontend menus take it as a choice): NULL, or no hook, is the
+    // game's Start. Asked on the presenter's thread at each input update, while the menu key is held (reading the game's
+    // memory is fine)
+    const char* (*menuKeyPress)(void);
 } Ps2GameInfo;
 
 // A prompt shown over the picture near its bottom (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down

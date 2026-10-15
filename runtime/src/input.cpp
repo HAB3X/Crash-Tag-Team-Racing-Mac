@@ -691,10 +691,11 @@ void InputUpdate(double t, SDL_Window* window)
             }
             else if (a.stick == -3)
             {
-                // A game with its own pause menu has the menu key as its Start
+                // A game with its own pause menu has the menu key as its Start, or what it says the key presses now
                 if (g_game != nullptr && g_game->ownPause != 0)
                 {
-                    pressed |= Start;
+                    const char* press = g_game->menuKeyPress != nullptr ? g_game->menuKeyPress() : nullptr;
+                    pressed |= press != nullptr ? ButtonsFromNames(press) : Start;
                 }
                 continue;
             }
