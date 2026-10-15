@@ -20,7 +20,7 @@ endif()
 
 ps2_recompile(cttr_code CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/config/cttr.toml DISC ${CTTR_DISC} EXECUTABLE SLUS_211.91 FILES 48)
 
-add_executable(crash-cttr src/main.cpp src/fibers.cpp src/radiop.cpp src/audio.cpp src/pctext.cpp)
+add_executable(crash-cttr src/main.cpp src/fibers.cpp src/radiop.cpp src/audio.cpp src/pctext.cpp src/controls.cpp)
 target_link_libraries(crash-cttr PRIVATE cttr_code ps2runtime)
 
 if(APPLE)
