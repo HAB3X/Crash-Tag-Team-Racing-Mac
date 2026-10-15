@@ -201,9 +201,11 @@ private:
             switch (header.kind)
             {
             case RecordTransfer:
+                GsRecordData(header.value, at, header.quadwords, false);
                 gif.TransferNow(header.value, at, header.quadwords);
                 break;
             case RecordKick:
+                GsRecordData(header.value, at, header.quadwords, true);
                 gif.KickRow(at, header.quadwords, header.value);
                 break;
             case RecordCall:

@@ -226,6 +226,14 @@ each frame over the effect's buffers read back first. The views are decoded whol
 decode made when its batch began, and an upload over pages the GPU holds newer is put into memory's copy on the GPU
 (`MergeWrites`) instead of read back; Arctic Antics went from 11 frames a second to 60.
 
+CTTR's park (a 30 frames a second game there: its frame sync waits for a second vblank in that mode, 60 in its menus) drew
+at 13. Its shadow volumes count into a 16 bit buffer with a wrapping additive blend that writes the alpha bit (0): summed
+like WoC's, which don't write it, instead of a copy of the target and two render passes for each of ~400 batches a frame
+(24 frames a second). Its glow reads the buffer it draws into as 8 bit texels through a texture's region repeat (about
+1,000 channel-shuffle sprites) and adds it to the frame with a region clamp: the shader wraps each texel and filters as
+the GS does (`RegionSample`), where the software GS drew them with about ten GPU readbacks a frame (28 frames a second).
+Both left every picture the same, the glow's buffer too, at 1x and 3x (`--gs-replay` of the park, below).
+
 A game that draws each field of an interlaced picture on its own (SMODE2's INT and FFMD; WoC does) moves its drawing half a
 line on every other field with XYOFFSET (the SDK's sceGsSetHalfOffset), for a TV that shows the fields half a line apart.
 Shown one field after another in the same place, the picture shook by half a line at 30 Hz: the GS drops that half line
@@ -257,7 +265,10 @@ rest. The results are the interpreter's bit for bit: `PS2_VU1=verify` runs both 
 translated where the translation's sticky bits are the interpreter's, `Sim.ready_for`). A game whose programs are bare code
 that its own DMA chains upload (CTTR: REF tags into `.vutext`) names them in its config (`[vu1] programs`: each one's EE
 addresses and the micro address it's uploaded at): CTTR's ten, 3,961 instructions, about 98% of those run translated in its
-park (10 frames a second to 30). FCSET is translated (its clip flag through the FMAC pipeline, as CLIP's).
+park (10 frames a second to 30). FCSET is translated (its clip flag through the FMAC pipeline, as CLIP's), and a branch with
+the E bit (the run ends after its delay slot; the next starts where it branched, an entry of its own). A block has up to 64
+variants: CTTR's main program's loops settle at 49 pipeline states, and with 32 the rest ran interpreted (its park's
+instructions 98.5% translated then, 99.3% now).
 
 ### Controllers and memory cards
 
@@ -315,6 +326,14 @@ second (also the window's title); `--log` turns on the channels' logs; `--audio-
 vblank period in which the game presented a picture: an enabled circuit's DISPFB changed (WoC flips between two buffers) or
 something was drawn or transferred into the buffer shown (CTTR copies each finished picture into one display buffer it
 never moves, which DISPFB alone counted as no frames at all). It's counted on the GS's side, in order with what the game sent.
+
+`--gs-record S:N:FILE` records the GS's side for N vblanks from the game's S-th second: the GS's and the GIF's state (local
+memory made current from the GPU first), then the GIF's data and VU1's kicks in order and the PCRTC's registers at each vblank
+(`gsrecord.cpp`; with the render thread). `--gs-replay FILE[:PASSES]` plays one back through the GS alone in place of the game,
+logging how long its vblanks took to draw; with `--snapshots` it writes each vblank's picture's hash to `replay.txt` there and
+saves the pictures `--snapshot-at`/`--snapshot-every` name by the recording's own times. The same recording drawn by two builds
+gives the same hashes when nothing that shows changed (a game's own pictures differ from run to run with the frames it skips),
+and the renderer's speed is measured without the game's.
 
 ### Not done yet
 

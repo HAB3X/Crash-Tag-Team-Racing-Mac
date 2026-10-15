@@ -43,8 +43,9 @@ CODE = '0x7FF'
 DATA = '0x3FF0'
 NAME = 'Program'
 TABLE = ''
-# At most this many variants of a block (more: the interpreter runs it)
-MAX_VARIANTS = 32
+# At most this many variants of a block (more: the interpreter runs it). CTTR's main program's loops settle at 49 states;
+# at 32 the rest ran interpreted, about a third of VU1's time in its park
+MAX_VARIANTS = 64
 
 
 def vif_mpgs(words):
@@ -215,7 +216,8 @@ class Translator:
         return vid
 
     def block_end(self, offset):
-        """The block from offset: (last instruction, kind) with kind 'branch' (the last is its delay slot), 'ebit', 'end' (the
+        """The block from offset: (last instruction, kind) with kind 'branch' (the last is its delay slot), 'ebit', 'ebitbranch'
+        (a branch with the E bit: the program ends after its delay slot, the next run going on where it branched), 'end' (the
         program's end), 'stop' (the instruction after the last isn't translated); None when nothing can be translated."""
         o = offset
         while o < self.size:
@@ -223,14 +225,12 @@ class Translator:
             if not supported(d):
                 return (o - 1, 'stop') if o > offset else None
             if d.ebit or d.is_branch:
-                if d.ebit and d.is_branch:
-                    return (o - 1, 'stop') if o > offset else None
                 if o + 1 >= self.size:
                     return (o - 1, 'stop') if o > offset else None
                 slot = self.ins[o + 1]
                 if not supported(slot) or slot.ebit or slot.is_branch:
                     return (o - 1, 'stop') if o > offset else None
-                return (o + 1, 'branch' if d.is_branch else 'ebit')
+                return (o + 1, 'ebitbranch' if d.ebit and d.is_branch else 'branch' if d.is_branch else 'ebit')
             o += 1
         return (self.size - 1, 'end')
 
@@ -282,6 +282,16 @@ class Translator:
                 self.leave(out, exit_sig, sim, '    ', indirect=True)
         elif kind == 'ebit':
             out.append('    next = (base + %d) & %s;' % (last + 1, CODE))
+            out.append('    ended = 1;')
+            self.leave(out, exit_sig, sim, '    ', indirect=True)
+        elif kind == 'ebitbranch':
+            b = branch
+            if b['kind'] == 'static':
+                out.append('    next = (base + %d) & %s;' % (b['target'], CODE))
+            elif b['kind'] == 'cond':
+                out.append('    next = ((%s) ? base + %d : base + %d) & %s;' % (b['cond'], b['target'], last + 1, CODE))
+            else:
+                out.append('    next = %s & %s;' % (b['target'], CODE))
             out.append('    ended = 1;')
             self.leave(out, exit_sig, sim, '    ', indirect=True)
         else:
@@ -888,6 +898,12 @@ def translate_all(root, config_path=None):
                 indirect_entries.append((tr, o + 3))
             if not d.ibit and d.lower in ('bal', 'jalr', 'jr', 'b') and o + 2 < tr.size:
                 indirect_entries.append((tr, o + 2))
+            # A branch with the E bit: the next run starts where it went (a static target's known)
+            if d.ebit and not d.ibit and d.lower in ('b', 'bal'):
+                target = o + 1 + imm11(d.lower_word)
+                if 0 <= target < tr.size:
+                    run_entries.append((tr, target))
+                    indirect_entries.append((tr, target))
 
     for tr in translators:
         tr.pending = []
