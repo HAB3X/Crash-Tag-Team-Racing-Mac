@@ -67,20 +67,10 @@ void WriteFrame(u32 port)
     u8 out[128] = {};
     if (Connected(port))
     {
-        u32 pressed = g_pressed[port].load();
-        u32 sticks = g_sticks[port].load();
         u8* data = out;
         data[0] = 0;
         data[1] = p.pressure ? 0x79 : p.analog ? 0x73 : 0x41;
-        u16 buttons = static_cast<u16>(~pressed);
-        std::memcpy(data + 2, &buttons, 2);
-        std::memcpy(data + 4, &sticks, 4);
-        // The pressures: right, left, up, down, triangle, circle, cross, square, L1, R1, L2, R2
-        static const int bits[12] = {5, 7, 4, 6, 12, 13, 14, 15, 10, 11, 8, 9};
-        for (int i = 0; i < 12; i++)
-        {
-            data[8 + i] = (pressed >> bits[i]) & 1 ? 0xFF : 0;
-        }
+        PadDualShock2Report(port, data + 2);
         // Two actuators (the small motor on/off, the big one 0-255), one combination of both
         const u8 act[8] = {1, 1, 0, 1, 1, 1, 1, 0x14};
         std::memcpy(out + 0x30, act, 8);
@@ -227,6 +217,21 @@ void PadVblank()
         {
             WriteFrame(port);
         }
+    }
+}
+
+void PadDualShock2Report(u32 port, u8 report[18])
+{
+    u32 pressed = g_pressed[port].load();
+    u32 sticks = g_sticks[port].load();
+    u16 buttons = static_cast<u16>(~pressed);
+    std::memcpy(report, &buttons, 2);
+    std::memcpy(report + 2, &sticks, 4);
+    // The pressures: right, left, up, down, triangle, circle, cross, square, L1, R1, L2, R2
+    static const int bits[12] = {5, 7, 4, 6, 12, 13, 14, 15, 10, 11, 8, 9};
+    for (int i = 0; i < 12; i++)
+    {
+        report[6 + i] = (pressed >> bits[i]) & 1 ? 0xFF : 0;
     }
 }
 

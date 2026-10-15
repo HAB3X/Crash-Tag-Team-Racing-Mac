@@ -170,6 +170,7 @@ time). RPC servers stand in for the modules:
 | cdvd (0x80000592-0x8000059C) | init, media mode, disk type, the last error, the tray, disk ready (both libcdvd's), search file, reads |
 | padman (0x80000100) | SDK 2.x libpad: port open/close, main mode, pressure mode, actuators; port 0 has a DualShock 2 whose two frames in EE memory are rewritten at every vblank (`iop/padman.cpp`) |
 | mcserv (0x80000400) | the libmc of SDKs before 2.6: init, info, open, close, seek, read, write, flush, chdir, getdir, set file info, delete, format; each port's card is a host folder (`iop/mcserv.cpp`) |
+| dbcman (0x80001300, 0x8000131B, 0x8000131C) | SDK 2.8's Dbc_Manager, the IOP side of libdbc, which libpad2, libmc2 and the game itself use instead of libpad and libmc (Biohazard Outbreak): its sockets and devices, and its drivers: ds2o_s1/ds2u_s1's DualShock 2 on port 0, mc2_s1's memory card in slot 1 (`iop/dbcman.cpp`, `ds2.cpp`, `mc2.cpp`; below) |
 | sdrdrv | libsd's RPC server (sceSdRemote): init, the parameters, switches, addresses and core attributes on the runtime's libsd; the reverb (sceSdSetEffectAttr: its sceSdEffectAttr's words are core, mode, the depths' halfwords, delay, feedback) and its work area's clearing, as LIBSD.IRX does them; the transfers not done (logged) |
 | CRI_ADX_Driver | CRI's ADX IOP module (`iop/cri_adx.cpp`, `cri_psm.cpp`, `cri_sj.cpp`; docs/cri_adx.md), known by its name and started as it loads: DTX's RPC server (0x90000200) and its mailboxes with the EE (exchanged at each vertical blank on the game's side), the SJs (stream joints) the EE makes and feeds through SJX, the streams' commands (IOPRNA), and PSM: each stream's 16 bit PCM converted to 48 kHz, mixed and played through an SPU2 core's input (`SdBlockTransLoop`) as the module does. Biohazard Outbreak's two discs |
 | a game's own modules | registered by the game (`ps2/iop.h`): RPC servers (WoC's NUSOUND, which drives the SPU2 through libsd, `ps2/sound.h`, below), modules started by name (CTTR's Bink IOP side), a module's thread at each vertical blank (`IopOnVblank`, run on the game's side so it may write the EE's memory as the IOP's DMA does) and their own SIF commands both ways (`IopRegisterCommand`; `IopSendCommand`, with data sent ahead into the EE's memory, from any thread: a command waits in an outbox while the SIF's lock is taken, and goes at the next SIF exchange or vblank) |
@@ -298,6 +299,30 @@ frames however fast the host draws and loads. The memory cards are folders, `por
 `~/Library/Application Support/PS2 Native Runtime/<executable>/memcards`): port 0's card is always in, port 1's when its folder
 exists. A save is the game's own directory of files, as on the card.
 
+Biohazard Outbreak (SDK 2.8 and 3.0) uses the newer libpad2, libmc2 and libdbc instead of libpad and libmc. They all go through
+the Dbc_Manager on the IOP (dbcman.irx), which the runtime stands in for at its RPC protocol, the EE's libraries running
+unchanged (the game calls libdbc itself too). dbcman keeps up to 16 devices, each registered by a driver module and connected
+when the driver finds its hardware (a type: 1 a pad, 2 a memory card; a port and slot; a name), and up to 16 sockets made by the
+EE (the same, with flags saying which of them must match, and two buffers in the EE's memory), and links each socket to a device
+that matches it. The sockets' connection words (1 linked) go to a work area the EE gives it (SetWorkAddr). A call on a socket
+(ReceiveData, SRData, SendData; SendData2 and SendData3 on servers of their own, with room for 4 and 8 KB, called without
+waiting) goes to its device's driver with a command (a class in its top byte, a group, a code), and a driver sends data into
+the socket's buffers. The RPC blocks' layouts are in `iop/dbcman.cpp`, taken from the module.
+
+- The DualShock 2 (`iop/ds2.cpp`; ds2o_s1 in File 2, ds2u_s1 in File 1, the same where dbcman sees them): the driver keeps the
+  pad in its pressure mode (0x79) and connects it as port 0. At every vblank it sends a 128 byte frame into the linked socket's
+  buffer n % 2, n the frame's number at its end (libpad2 takes the newer of the two): the state, the data's length, the pad's
+  answer (buttons, sticks, the twelve pressures: padman's, from the same input) and the button profile (which bits and bytes of
+  the data the mode has). ReceiveData asks for the mode, the state, the profile and the actuators; SendData sets the actuators
+  (rumble isn't done: the call is answered as done).
+- The memory card (`iop/mc2.cpp`; mc2_s1 3020, File 2's): mc2_s1 is a page device. The card's file system (directories, files,
+  the FAT, the icons, formatting) is libmc2's, on the EE, which sends the driver page reads (their ECC checked), page writes
+  (each block rewritten through two backup blocks, as the driver does it, so a write cut short can be finished), block erases
+  and copies, and asks for the card's size and the clock. So the card can't be a folder of files as mcserv's are: it's a card
+  image, `port0.ps2` in the memory cards' folder, 16384 pages of 528 bytes (data and spare area with the ECC), as PCSX2's .ps2
+  cards are laid out. A new one is blank (all FF), and the game offers to format it. File 1's mc2_s1 (2811) has another
+  protocol (12 commands, other checks): it's refused at load (logged), and File 1 sees no card.
+
 ### The PC menus (`runtime/src/ui/`)
 
 The Crash Twinsanity native port's PC menus (its `ui/` there: the overlay, the options screen's look and logic, the prompts,
@@ -352,7 +377,7 @@ and the renderer's speed is measured without the game's.
 ### Not done yet
 
 The SPU2's DMA timing, rumble, the
-memory card's newer protocol (libmc 2.6 on), movies (IPU), the VU flags in macro mode, the FPU's exact rounding.
+memory card's newer protocols (libmc 2.6 on; libmc2 with File 1's mc2_s1 2811), movies (IPU), the VU flags in macro mode, the FPU's exact rounding.
 
 ## Repositories and licences
 
