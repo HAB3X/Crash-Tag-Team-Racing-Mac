@@ -148,7 +148,10 @@ public:
     {
         req_ = request;
         size = 8320; // the driver writes it (0x2014)
-        return Command(command);
+        s32 result = Command(command);
+        PS2_LOG(LogIop, "mc2: command %u (pages %u+%u, blocks %u %u, ECC %u): %d", command, Req(0), Req(4), Req(28), Req(32),
+                Req(36), result);
+        return result;
     }
 
 private:
