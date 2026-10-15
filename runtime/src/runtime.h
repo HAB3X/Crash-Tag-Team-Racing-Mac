@@ -89,6 +89,7 @@ std::string ReadString(u32 address, u32 max = 1024);
 
 // --- cpu.cpp
 const Ps2FunctionEntry* FindFunction(u32 address);
+const Ps2OverlayFunction* FindOverlayFunction(u32 address);
 // Calls guest code at an address with a context (a thread's or a handler's)
 void Call(Ps2Cpu* c, u32 address);
 // The current host thread's guest context (for diagnostics)

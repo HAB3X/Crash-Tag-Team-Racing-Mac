@@ -411,13 +411,21 @@ def branch_condition(i):
 
 
 class FunctionEmitter:
-    def __init__(self, program, start, end, names, overrides, setjmps=frozenset()):
+    def __init__(self, program, start, end, names, overrides, setjmps=frozenset(), encrypted=False):
         self.p = program
         self.start = start
         self.end = end
         self.names = names            # address -> C name of every function (overrides already applied)
         self.overrides = overrides
         self.setjmps = setjmps        # the game's setjmp functions (the config's)
+        # Code that decrypts parts of itself as it runs (an overlay the config marks): a word that isn't an instruction
+        # stops the game if it's reached, instead of the recompile
+        self.encrypted = encrypted
+
+    def plain(self, i):
+        if i.name == "unknown" and self.encrypted:
+            return f"ps2_undecodable(c, 0x{i.addr:08x}u, 0x{i.word:08x}u);"
+        return emit_plain(i, None)
 
     def inside(self, a):
         return self.start <= a < self.end
@@ -472,7 +480,7 @@ class FunctionEmitter:
         for a in sorted(slot_labels):
             i = p.insn(a)
             lines.append(f"L_{a:08x}:;")
-            lines.extend("    " + x for x in [emit_plain(i, None)] if x)
+            lines.extend("    " + x for x in [self.plain(i)] if x)
             lines.append(f"    goto L_{a + 4:08x};")
         lines.append("}")
         return "\n".join(lines)
@@ -490,7 +498,7 @@ class FunctionEmitter:
         d = self.p.insn(i.addr + 4)
         if d.kind:
             return [f"/* branch in a delay slot at {d.addr:08x} ignored */"]
-        return [emit_plain(d, None)]
+        return [self.plain(d)]
 
     def goto_or_tail(self, target):
         if self.inside(target):
@@ -500,7 +508,7 @@ class FunctionEmitter:
     def emit_insn(self, i, reached):
         k = i.kind
         if not k:
-            return [emit_plain(i, None)]
+            return [self.plain(i)]
         if k in ("branch", "branch_likely"):
             from analysis import is_unconditional
             out = []
@@ -555,7 +563,7 @@ class FunctionEmitter:
             out.append("  ps2_call(c, t); }")
             return out
         if k == "syscall":
-            return [emit_plain(i, None)]
+            return [self.plain(i)]
         if k == "eret":
             # Back from kernel mode to the address in ErrorEPC or EPC: a game's own kernel-mode code (CTTR's libkernel puts its
             # return address in ErrorEPC to write a timer with ERL set) goes back to its caller as JR RA would, or on to a

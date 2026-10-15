@@ -95,14 +95,30 @@ def read_raw_programs(elf_path, config_path):
     return programs
 
 
+def vutext(elf_path, config_path):
+    """The executable's .vutext bytes: its section, or the config's [executable] vutext range when it has no sections"""
+    elf = Elf(elf_path)
+    section = elf.sections.get('.vutext')
+    if section is not None:
+        return elf.data[section['offset']:section['offset'] + section['size']]
+    if config_path is None:
+        return b''
+    import tomllib
+    with open(config_path, 'rb') as f:
+        r = tomllib.load(f).get('executable', {}).get('vutext')
+    if not r:
+        return b''
+    start, end = (int(x, 0) if isinstance(x, str) else x for x in r)
+    base, image = elf.image()
+    return image[start - base:end - base]
+
+
 def read_programs(elf_path, config_path=None):
     """Each .vutext packet's instructions at consecutive addresses: (micro address, [instructions]), duplicates once; then the
     config's bare programs."""
-    elf = Elf(elf_path)
-    section = elf.sections.get('.vutext')
-    if section is None or section['size'] == 0:
-        return []
-    blob = elf.data[section['offset']:section['offset'] + section['size']]
+    blob = vutext(elf_path, config_path)
+    if not blob:
+        return read_raw_programs(elf_path, config_path)
     programs = []
     seen = set()
     at = 0

@@ -82,13 +82,26 @@ code that jumps into an unrolled block (`lui`+`addi` base plus an index) gets ev
 - `setjmp`-style and context-switching code doesn't exist in the guest: the kernel is the runtime's, so threads switch inside
   syscalls, on host threads.
 
-### Self-modifying code and overlays
+### Overlays, stripped executables and self-modifying code
 
-Neither is supported by the static path: the recompiled code is the executable as loaded. A game that loads code at run time
-(overlays, IRX-style EE modules) needs either those files recompiled too (the same tool on each overlay, linked at its load
-address) or an interpreter fallback (`ps2_call` on an address outside the table would run it). WoC has neither: `ps2_call` on an
-unknown address stops with the address, which is how missing function starts are found. Code copied into kernel memory by
-libkernel (its patches of the real kernel) is never run: the HLE kernel doesn't need it.
+- **Overlays.** A game that loads code from files at fixed addresses (Biohazard Outbreak's `BIN/n.DAT`, each the `MWo3`
+  header then code and data, loaded whole) lists them in its config (`[[overlays]]`: the file on the disc, where it's
+  loaded, its code's range). `recomp.py` reads them from the disc image and recompiles each beside the executable, its
+  functions named `<overlay>_XXXXXXXX`. Calls within an overlay and from it into the executable are direct; anything into
+  an overlay goes through `ps2_call`. Several overlays share addresses, so `table.c` lists every overlay function with its
+  first four words, and every overlay with up to eight words no other overlay over the same addresses holds. `ps2_call`
+  runs the function whose first words are in memory, and when two overlays have the same words there, the one whose check
+  words are too. A call into an overlay's memory that isn't a function start stops, naming the overlay.
+- **Executables with no section table.** The config gives the code's ranges (`[executable] text`) and the VU microcode's
+  (`vutext`, which `vutranslate.py` then reads as it would a `.vutext` section). Gaps between the ranges are holes: no
+  function starts there, and they're searched for pointers as data (the microcode isn't).
+- **Data kept in the text.** An unreached run of words, or a pointer's target, where anything that would run doesn't decode
+  is a table, not a function (Outbreak's libkernel keeps its syscall patch tables between its functions).
+- **Self-modifying code** isn't supported by the static path: the recompiled code is what's on the disc. An overlay marked
+  `encrypted` (Outbreak's DNAS modules decrypt parts of themselves as they run) still recompiles; its words that don't
+  decode become `ps2_undecodable`, which stops the game if one is reached. Code copied into kernel memory by libkernel (its
+  patches of the real kernel) is never run: the HLE kernel doesn't need it. `ps2_call` on an address no table has stops with
+  the address, which is how missing function starts are found.
 
 ## The runtime (`runtime/`)
 

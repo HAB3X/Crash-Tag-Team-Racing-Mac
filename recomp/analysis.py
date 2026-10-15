@@ -12,23 +12,23 @@ from r5900 import decode
 
 
 class Program:
-    def __init__(self, elf, config):
-        self.elf = elf
+    def __init__(self, code, config):
+        """code: the CodeImage (image.py) to analyse; config: its extra and not starts"""
+        self.code = code
         self.config = config
-        text = elf.sections[".text"]
-        self.text_start = text["addr"]
-        self.text_end = text["addr"] + text["size"]
-        raw = elf.data[text["offset"]:text["offset"] + text["size"]]
-        self.words = list(struct.unpack_from(f"<{len(raw) // 4}I", raw))
+        self.text_start = code.text_start
+        self.text_end = code.text_end
+        self.words = code.text_words()
         self.insns = [decode(w, self.text_start + 4 * n) for n, w in enumerate(self.words)]
-        self.image_base, self.image = elf.image()
+        self.image_base, self.image = code.image_base, code.image
         self.jump_tables = {}   # jr address -> list of targets
         self.computed_starts = set()
+        self.decode_cache = {}
         self.functions = []     # sorted (start, end)
 
     # --- helpers
     def in_text(self, addr):
-        return self.text_start <= addr < self.text_end and addr % 4 == 0
+        return self.text_start <= addr < self.text_end and addr % 4 == 0 and not self.code.in_hole(addr)
 
     def insn(self, addr):
         return self.insns[(addr - self.text_start) // 4]
@@ -40,14 +40,12 @@ class Program:
         return None
 
     def data_pointers(self):
-        """Words in the data sections that point into the text."""
+        """Words in the data that point into the text."""
         out = set()
-        for name, sec in self.elf.sections.items():
-            if name in (".text", ".vutext") or sec["type"] != 1 or not sec["addr"]:
-                continue
-            data = self.elf.data[sec["offset"]:sec["offset"] + sec["size"]]
-            for k in range(0, len(data) - 3, 4):
-                w = struct.unpack_from("<I", data, k)[0]
+        for start, end in self.code.data_ranges:
+            off = start - self.image_base
+            for k in range(off, off + (end - start) - 3, 4):
+                w = struct.unpack_from("<I", self.image, k)[0]
                 if self.in_text(w):
                     out.add(w)
         return out
@@ -192,6 +190,13 @@ class Program:
             t += 4
         return targets
 
+    def decodes(self, a):
+        """Whether everything that would run from a decodes: if not, a is data kept in the text, not a function. Followed to
+        the end of the text, not of a region, as how far a region goes depends on the starts found so far."""
+        if a not in self.decode_cache:
+            self.decode_cache[a] = all(self.insn(x).name != "unknown" for x in self.reachable(a, self.text_end))
+        return self.decode_cache[a]
+
     # --- control flow within one region
     def reachable(self, start, end):
         seen = set()
@@ -252,17 +257,22 @@ class Program:
                 continue  # a delay slot: its branch decides
             if nxt >= e and self.in_text(nxt):
                 found.add(nxt)
-        # Code after the reached part that nothing reaches starts a function (padding skipped)
+        # Code after the reached part that nothing reaches starts a function (padding skipped). Words that don't decode, in
+        # what would run from there, make it data kept in the text (Biohazard Outbreak's libkernel keeps its syscall
+        # patch tables between its functions): no function, and the search goes on past it
         a = s
+        skipped = set()
         while a < e:
-            if a not in seen and self.words[(a - self.text_start) // 4] != 0:
-                found.add(a)
-                break
+            if a not in seen and a not in skipped and self.words[(a - self.text_start) // 4] != 0:
+                if self.decodes(a):
+                    found.add(a)
+                    break
+                skipped |= self.reachable(a, self.text_end)
             a += 4
         return seen, found
 
     def analyse(self):
-        starts = {self.elf.entry}
+        starts = {self.code.entry} if self.code.entry is not None else set()
         starts |= set(self.config.get("extra_functions", []))
         not_starts = set(self.config.get("not_functions", []))
         for i in self.insns:
@@ -298,6 +308,8 @@ class Program:
         # A function's address built in code is a start too, where one can begin (CTTR's 0x3B8B10, a thread's entry, comes
         # after two unreached instructions that would otherwise run into it)
         pointers |= {p for p in self.code_pointers() - jt_targets if not self.runs_into(p)}
+        # A pointer to words that don't decode points at a table kept in the text (code builds its address too)
+        pointers = {p for p in pointers if p in called or self.decodes(p)}
         starts = {s for s in starts if self.in_text(s)} - not_starts
         starts |= pointers
         cache = {}

@@ -73,6 +73,37 @@ typedef struct Ps2FunctionEntry
 extern const Ps2FunctionEntry ps2_function_table[];
 extern const u32 ps2_function_count;
 
+// Code overlays: files the game loads at fixed addresses and runs, recompiled beside the executable. Several share
+// addresses, so a call into one runs the function whose overlay is in memory there: its first words match memory, and when
+// more than one does, its overlay's check words (words no other overlay over those addresses holds) match too.
+typedef struct Ps2OverlayFunction
+{
+    u32 start;
+    u32 end;
+    Ps2Function function;
+    u32 overlay;   // index in ps2_overlays
+    u32 head[4];   // the function's first words
+} Ps2OverlayFunction;
+
+typedef struct Ps2Overlay
+{
+    const char* file;  // on the disc
+    u32 base;          // where the game loads it
+    u32 end;           // the file's end in memory
+    u32 checkCount;
+    struct
+    {
+        u32 address;
+        u32 word;
+    } check[8];
+} Ps2Overlay;
+
+// Sorted by start; empty (count 0) for a game without overlays
+extern const Ps2OverlayFunction ps2_overlay_function_table[];
+extern const u32 ps2_overlay_function_count;
+extern const Ps2Overlay ps2_overlays[];
+extern const u32 ps2_overlay_count;
+
 // ---------------------------------------------------------------------------------------------------------------------------
 // Memory: the EE's 4 GB address space is a host reservation with main memory mapped at 0 and at its mirrors (0x20000000,
 // 0x30000000, 0x80000000, 0xA0000000) and the scratchpad at 0x70000000. The hardware registers (0x10000000-0x1FFFFFFF, and
@@ -235,6 +266,8 @@ static inline void ps2_sdr(Ps2Cpu* c, int rt, u32 a)
 void ps2_call(Ps2Cpu* c, u32 address);
 void ps2_syscall(Ps2Cpu* c, u32 pc);
 void ps2_break(Ps2Cpu* c, u32 pc);
+// A word of an encrypted overlay that isn't an instruction, reached as it is on the disc (recomp.py): a stop
+void ps2_undecodable(Ps2Cpu* c, u32 pc, u32 word);
 // ERET: leaves the exception level (ERL first, else EXL) and gives the address to go on at (ErrorEPC or EPC)
 u32 ps2_eret(Ps2Cpu* c, u32 pc);
 u32 ps2_mfc0(Ps2Cpu* c, int reg);

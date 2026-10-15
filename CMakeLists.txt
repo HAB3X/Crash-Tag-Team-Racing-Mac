@@ -72,8 +72,8 @@ target_compile_options(ps2runtime PRIVATE -O2 -g -Wall -Wno-unused-function)
 
 # ps2_recompile(TARGET CONFIG file.toml DISC image EXECUTABLE name [FILES n])
 #
-# Copies the executable out of your disc image at build time, recompiles it to C in the build folder, and makes a library of
-# it. Nothing of the game's goes in a source folder.
+# Copies the executable out of your disc image at build time, recompiles it (and the code overlays its config names, read
+# from the disc) to C in the build folder, and makes a library of it. Nothing of the game's goes in a source folder.
 function(ps2_recompile target)
     cmake_parse_arguments(ARG "" "CONFIG;DISC;EXECUTABLE;FILES" "" ${ARGN})
     if(NOT ARG_FILES)
@@ -107,7 +107,8 @@ function(ps2_recompile target)
     add_custom_command(
         OUTPUT ${sources} ${out}/funcs.h
         COMMAND ${PS2_PYTHON} ${PS2_RUNTIME_ROOT}/recomp/recomp.py ${ARG_CONFIG} ${elf} ${out} --files ${ARG_FILES}
-        DEPENDS ${elf} ${ARG_CONFIG} ${recomp_py}
+                --disc ${ARG_DISC}
+        DEPENDS ${elf} ${ARG_CONFIG} ${recomp_py} ${PS2_RUNTIME_ROOT}/tools/disc.py
         COMMENT "Recompiling ${ARG_EXECUTABLE}"
         VERBATIM)
     add_library(${target} STATIC ${sources})

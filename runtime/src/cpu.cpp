@@ -24,6 +24,73 @@ const Ps2FunctionEntry* FindFunction(u32 address)
 }
 
 void Call(Ps2Cpu* c, u32 address) { ps2_call(c, address); }
+
+namespace
+{
+bool MemoryHolds(u32 address, u32 word) { return *reinterpret_cast<const u32*>(ps2_mem + address) == word; }
+
+bool HeadInMemory(const Ps2OverlayFunction& f)
+{
+    for (u32 n = 0; n < 4; n++)
+    {
+        if (!MemoryHolds(f.start + 4 * n, f.head[n]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool OverlayInMemory(const Ps2Overlay& o)
+{
+    for (u32 n = 0; n < o.checkCount; n++)
+    {
+        if (!MemoryHolds(o.check[n].address, o.check[n].word))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+}
+
+// The overlay function starting at an address whose overlay is in memory (recomp.h), or a stop that says what's there
+const Ps2OverlayFunction* FindOverlayFunction(u32 address)
+{
+    const Ps2OverlayFunction* begin = ps2_overlay_function_table;
+    const Ps2OverlayFunction* end = begin + ps2_overlay_function_count;
+    const Ps2OverlayFunction* first =
+        std::lower_bound(begin, end, address, [](const Ps2OverlayFunction& f, u32 a) { return f.start < a; });
+    // The candidates whose first words are in memory; when several are (the same code at the same address in two
+    // overlays), the one whose overlay's check words are
+    const Ps2OverlayFunction* head = nullptr;
+    const Ps2OverlayFunction* found = nullptr;
+    int heads = 0;
+    int overlays = 0;
+    for (const Ps2OverlayFunction* f = first; f != end && f->start == address; ++f)
+    {
+        if (HeadInMemory(*f))
+        {
+            head = f;
+            heads++;
+            if (OverlayInMemory(ps2_overlays[f->overlay]))
+            {
+                found = f;
+                overlays++;
+            }
+        }
+    }
+    if (heads <= 1)
+    {
+        return head;
+    }
+    if (overlays != 1)
+    {
+        Fatal("call to %08x: %d overlays have this function's first words and %d of them are in memory", address, heads,
+              overlays);
+    }
+    return found;
+}
 }
 
 using namespace Ps2;
@@ -31,6 +98,26 @@ using namespace Ps2;
 extern "C" void ps2_call(Ps2Cpu* c, u32 address)
 {
     const Ps2FunctionEntry* f = FindFunction(address & 0x1FFFFFFF);
+    if (f == nullptr)
+    {
+        if (const Ps2OverlayFunction* o = FindOverlayFunction(address & 0x1FFFFFFF))
+        {
+            PS2_LOG(LogCall, "call %08x (%s)", address, ps2_overlays[o->overlay].file);
+            c->depth++;
+            o->function(c);
+            c->depth--;
+            return;
+        }
+        for (u32 n = 0; n < ps2_overlay_count; n++)
+        {
+            const Ps2Overlay& o = ps2_overlays[n];
+            if ((address & 0x1FFFFFFF) >= o.base && (address & 0x1FFFFFFF) < o.end && OverlayInMemory(o))
+            {
+                Fatal("call to %08x: not a function start of %s, the overlay in memory there (add it to its extra functions)",
+                      address, o.file);
+            }
+        }
+    }
     if (f == nullptr || f->start != (address & 0x1FFFFFFF))
     {
         if (f != nullptr)
@@ -145,6 +232,14 @@ extern "C" void ps2_switch_stack(Ps2Cpu* c, u32 sp, u32 pc)
     static thread_local StackStart start;
     start.c = c;
     CallOnHostStack(stack + HostStackSize, RunOnStack, &start);
+}
+
+extern "C" void ps2_undecodable(Ps2Cpu* c, u32 pc, u32 word)
+{
+    (void)c;
+    Fatal("%08x: %08x isn't an instruction: this overlay's code decrypts itself as it runs, and the recompiled code is what's "
+          "on the disc, still encrypted here",
+          pc, word);
 }
 
 extern "C" void ps2_break(Ps2Cpu* c, u32 pc)
