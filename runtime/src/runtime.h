@@ -54,6 +54,7 @@ enum LogChannel
     LogCall = 1 << 7,
     LogThread = 1 << 8,
     LogIrq = 1 << 9,
+    LogIpu = 1 << 10,
 };
 extern u32 g_logMask;
 void Log(const char* format, ...) __attribute__((format(printf, 1, 2)));
@@ -135,12 +136,28 @@ u64 IoTimerEvents();
 
 // --- dmac.cpp
 void DmacInit();
+// toIPU (channel 4): up to `quadwords` of its transfer's data moved into the IPU at `out` as the IPU asks for them (its FIFO
+// refilled while it decodes); fewer when the transfer ends (it finishes then, with its interrupt) or isn't running
+u32 DmacToIpu(u8* out, u32 quadwords);
+// fromIPU (channel 3): the IPU's output taken into memory, as much of `quadwords` as the running transfer has room for (it
+// finishes, with its interrupt, when its QWC is used up); 0 when it isn't running
+u32 DmacFromIpu(const u8* data, u32 quadwords);
 // A VIF's stall cancelled (VIFn_FBRST's STC): what it held, then its DMA transfer, go on
 void DmacVifUnstall(int vif);
 u32 DmacRead(u32 address);
 void DmacWrite(u32 address, u32 value);
 // The channels' data from the SIF (the IOP side): SIF0 (IOP to EE) moved by the IOP's HLE
 bool Sif0Receive(const u8* data, u32 bytes);
+
+// --- ipu/ipu.cpp: the IPU, the EE's MPEG-2 decoder (DESIGN.md): its registers (0x10002000-0x10002030), its FIFOs
+// (IPU_OUT_FIFO 0x10007000, IPU_IN_FIFO 0x10007010), fed by toIPU's DMA and drained by fromIPU's
+u32 IpuRead32(u32 address);
+void IpuWrite32(u32 address, u32 value);
+u128 IpuReadFifo();
+void IpuWriteFifo(u128 quadword);
+// A transfer on fromIPU (3) or toIPU (4) started (or let go by D_CTRL's DMAE): the IPU's output goes out, its FIFO is filled,
+// and a command waiting for either goes on
+void IpuDmaStarted(int channel);
 
 // --- gs.cpp
 // The hardware layer's set (hw/hardware.h): the hardware renderer finds the GS through NativeGraphics::GetHardware

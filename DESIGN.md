@@ -112,7 +112,7 @@ its mirrors 0x20000000 (uncached), 0x30000000 (uncached accelerated), 0x80000000
 scratchpad at 0x70000000. Anything else faults, and the handler prints the guest address and the guest call stack (host stack
 frames are named by guest address). Kernel memory below 0x00080000 is ordinary RAM, zeros unless the HLE kernel writes it.
 
-### Hardware registers (`io.cpp`, `dmac.cpp`, `gs.cpp`)
+### Hardware registers (`io.cpp`, `dmac.cpp`, `gs.cpp`, `ipu/`)
 
 - Timers T0-T3 from the host clock (bus clock 147.456 MHz and its dividers, hblank), with ZRET; reaching COMP and overflowing
   set MODE's flags (cleared by writing ones) and raise the INTC's timer causes where MODE asks, the kernel's timer thread waking
@@ -124,8 +124,9 @@ frames are named by guest address). Kernel memory below 0x00080000 is ordinary R
   channels belong to the kernel and the IOP (below). The MFIFO (D_CTRL's MFD, D_RBOR, D_RBSR): fromSPR writes into the ring,
   VIF1 or GIF started in chain mode drains it (tags and their data read in the ring, wrapping; REF's data outside it) as far as
   fromSPR has filled it, then stays busy with D_STAT's MEIS set until fromSPR adds more (CTTR's renderer). The VIF1 read-back
-  (GS to memory) isn't done.
-- INTC: I_STAT, I_MASK; causes raised by the GS (SIGNAL, FINISH, VSINT), the vblank timer, the DMAC and the VIFs.
+  (GS to memory) isn't done. fromIPU and toIPU move their data as the IPU gives and takes it (below), not all at once. A
+  chain's CHCR.TAG is the upper half of its last tag's first word (PCE, ID, IRQ).
+- INTC: I_STAT, I_MASK; causes raised by the GS (SIGNAL, FINISH, VSINT), the vblank timer, the DMAC, the VIFs and the IPU.
 - A VIF code's interrupt bit stalls the VIF once the code is done and raises its INTC cause: the DMA transfer feeding it stops
   where it is (still busy; the words of a quadword it didn't take wait in its FIFO) until the game cancels the stall
   (VIFn_FBRST's STC), then goes on. VIFn_STAT shows the stall, VIFn_MARK the MARK code's value (or the EE's own), VIFn_CODE the
@@ -200,6 +201,83 @@ shape; SDK 2.5's and 2.8's hold the same values): none in the repository. `SdBlo
 write into a core's input (AutoDMA): a buffer in the IOP's memory played a half at a time, the transfer's interrupt handler run as each half has been taken (CTTR's movies' sound). The SPU2 and the driver's state belong to
 whoever holds the sound lock: the making of a few hundred samples at a time, or the RPC server answering a call on the game's
 thread; neither waits for anything else. `--audio-dump FILE.wav` writes everything made to a WAV file.
+
+### Movies: the IPU (`ipu/`)
+
+The IPU is the EE's MPEG-2 decoder: it decodes macroblocks (the VLCs, inverse quantisation, the inverse DCT) and converts
+colour; the motion compensation is the EE's. It's a hardware unit of the runtime's (`runtime/src/ipu/`) rather than of `hw/`
+(the Twinsanity port's copied layer, which has no IPU), because it's bound to the runtime's DMAC: its input and output move
+with channels 4 and 3 as it decodes.
+
+- Registers: IPU_CMD (0x10002000; a write starts a command; it reads FDEC's or VDEC's result, after other commands the next
+  32 bits; bit 63 busy), IPU_CTRL (IFC, OFC, CBP, ECD, SCD, the settings IDP, AS, IVF, QST, MP1 and PCT as written, RST resets,
+  BUSY), IPU_BP (BP, IFC, FP), IPU_TOP (the next 32 bits; bit 63 while busy or with fewer than 32 bits held), IPU_OUT_FIFO
+  (0x10007000) and IPU_IN_FIFO (0x10007010), 128 bits.
+- Commands, all ten: BCLR, IDEC (a slice of intra macroblocks to RGB32 or RGB16, with SGN, DTE and DTD), BDEC (one macroblock
+  to RAW16: MBI, DCR, DT, QSC; a non-intra one's coded block pattern read by the IPU), VDEC (macroblock_address_increment with
+  0x22 for stuffing and 0x23 for escape, macroblock_type by IPU_CTRL's picture type, motion_code, dmvector: the value in the
+  word's low half, the code's length in its high half), FDEC, SETIQ (64 bytes in the bitstream's zigzag order, as libipu's
+  default matrix is), SETVQ, CSC, PACK (RGB16 or INDX4), SETTH. After BDEC's and IDEC's macroblock, zero bits where a
+  macroblock would begin end the slice: the position goes past the byte boundary and the zero bytes, and a start code sets SCD,
+  anything else ECD. INTC cause 8 at each command's end (BCLR and SETTH at once; a reset while busy).
+- The decoding is ISO/IEC 13818-2's, written from the standard: Annex B's VLC tables written as the standard prints them and
+  built into lookup tables at start-up (each checked for codes that overlap), MPEG-2's inverse quantisation and mismatch
+  control, MPEG-1's (MP1) escapes and oddification. The inverse DCT is separable fixed point (17 bit constants, 64 bit sums):
+  13 bit constants missed IEEE 1180's mean square error (0.027 against 0.02), these pass it with room (0.0024). The colour
+  conversion is the IPU's integer method (BT.601 in 1/128 steps, each product shifted down 6 bits, then the rounding shift),
+  RGB16 with its 4 x 4 dither.
+- A command runs when it's written, as far as its data lets it, in units (a macroblock, a VLC, a matrix, a CSC macroblock):
+  a unit that runs out of input is taken back whole (the bits it took kept) and run again when toIPU or IPU_IN_FIFO brings
+  more, so the decoding needs no state saved in the middle of a block; a unit whose output would overfill the 8 quadword output
+  FIFO waits for fromIPU. Between commands the input is kept as the console's: toIPU fills the FIFO (8 quadwords) and the
+  decoder's buffer (2), so IPU_BP's IFC + FP is what the IPU took from toIPU and hasn't passed, and BP its bit in the first
+  (Sony's sceIpuRestartDMA rewinds toIPU's MADR by IFC + FP and gives BCLR BP).
+- toIPU (channel 4), normal or chain mode, moves data only as the IPU takes it: a transfer stays busy until its data has gone
+  into the FIFO, a chain read a tag at a time (`ReadTag`, RunChain's rules). Started again with data left of a tag, whether it
+  ends after that data is the tag's in CHCR (REFE, END, IRQ with TIE). fromIPU (channel 3), normal mode, takes the output as
+  it's made and ends with its interrupt when its QWC is used up.
+- Chosen where the console's behaviour isn't known (each named in the code): the alternate scan's weights by the raster
+  position's zigzag place (the standard's; no movie seen uses the alternate scan), IDP 3 as 11 bits and a picture type IPU_CTRL
+  doesn't name as an I picture's (both logged), RGB16's A bit for an alpha of 0x40, the DC predictors after a reset at 128 << IDP,
+  a non-intra macroblock's samples saturated to -256..255, ECD for a code no table has in BDEC and IDEC. The inverse DCT isn't
+  the console's bit for bit (that isn't known): against FFmpeg's decoding of the same movies the samples differ by at most 3-4.
+
+What Biohazard Outbreak File 2 (SLPM_656.92; File 1's SLPM_654.28 has the same library versions) does with it. CRI's Sofdec (SFD 1.862, MPV
+1.862, M2V 1.860) decodes through Sony's libmpeg and libipu (`PsIIlibipu  2800`), linked in the executable; no overlay
+touches the IPU:
+
+- libipu: sceIpuInit 0x113C58 (RST, BCLR, the default matrices through IPU_IN_FIFO with SETIQ intra and non-intra, SETVQ,
+  SETTH, RST, BCLR), sceIpuStopDMA 0x113940 and sceIpuRestartDMA 0x113A28 (above), sceIpuSync 0x113B78. CHCR is written with
+  D_ENABLEW's suspend bit set around it (0x113850, 0x1138C8).
+- libmpeg: _sceMpegWaitIpuIdle 0x144F18 polls IPU_CTRL until BUSY clears or ECD is set, calling the stream's no-data callback
+  (0x147CA0) every 5,000 polls; 0x145080 waits on IPU_CMD's bit 63 and returns its word; the VDEC wrapper 0x145208 reads
+  IPU_TOP and IPU_BP after. _decMB0 0x1446C8 puts the picture type in IPU_CTRL, VDECs macroblock_type, starts fromIPU into
+  the scratchpad for 48 quadwords (0x146ED0) then BDEC (0x144EE8). A picture's colour conversion (0x147460): BCLR, toIPU in
+  normal mode with its macroblocks (RAW8, 0xFFFF quadwords at a time from a DMAC channel 4 handler, 0x147388), then fromIPU
+  and CSC for under 1,024 macroblocks (0x146F58), or CSC 1,023 at a time from a DMAC channel 3 handler (0x147080, 0x1471C8).
+- The bitstream reaches toIPU from a ring in chain mode (0x170780 writes a tag, 0x170820 makes the ring: 2 KB blocks of REF
+  tags, 0x80 quadwords each, then a NEXT back to the start): 0x170B20 adds what's been demuxed (toIPU suspended by writing
+  CHCR without STR, the new blocks' tags REF and the last REFE, then CHCR with STR again); 0x170D20 and 0x170E20 stop and
+  restart it as libipu's do, rewinding through the tags.
+- Commands used: BCLR, BDEC, VDEC, FDEC, SETIQ, SETVQ, SETTH, CSC; not IDEC or PACK. The IPU's interrupt isn't used (no
+  handler for INTC cause 8, no EnableIntc(8)): the libraries poll BUSY. DMAC handlers for channels 3 and 4 are, for CSC.
+- The movies: NETBIO01.DAT (AFS) holds adxsnd.afs, which holds 21 .sfd files: MPEG-2 Main Profile video, 512 wide (320 to 448
+  lines), 29.97 frames a second, progressive frames with frame prediction, the non-linear quantiser and intra VLC table one.
+
+The test (`runtime/tests/ipu/`, `ninja ps2_ipu_movie` in a game's build): `ps2_ipu_movie MOVIE.sfd OUTDIR [--frames N]
+[--png-every K] [--ring-blocks B] [--reference FILE.yuv]` demuxes a movie's video and plays it the way libmpeg and CRI's
+ring do, through the runtime's registers only: the headers by FDEC and IPU_TOP, VDEC, BDEC into the scratchpad through
+fromIPU, the default matrices through IPU_IN_FIFO between sceIpuStopDMA and sceIpuRestartDMA, the motion compensation in the
+test (the EE's part), and each picture's CSC by toIPU and fromIPU, saved as PNGs. A small ring (`--ring-blocks 3`) makes the
+IPU run out of data inside macroblocks (about 100 units taken back in PS2continue.sfd) with the same pictures. With
+`--reference` (FFmpeg's decoding: `ffmpeg -f mpeg -i MOVIE.sfd -fps_mode passthrough -f rawvideo -pix_fmt yuv420p FILE.yuv`)
+each picture is compared. It also checks the inverse DCT against IEEE 1180, IDEC against BDEC + CSC on the first I picture,
+and PACK against its definition. All 21 movies decode to their ends (42,935 pictures); five compared with FFmpeg's (all of
+PS2continue, PS2demo01, PS2end0200, PS2title1_jpn, PS2opening's first 1,500) are within 3-4 of each sample (PSNR 62 dB or
+more). The IPU's own time a 512 x 448 picture on Apple Silicon (the register writes that run it, timed): 0.5-1.9 ms of
+decoding (BDEC, VDEC, FDEC) and 0.35-0.9 ms of CSC, the movies' averages; 99% of pictures under 5 ms and 2.3 ms. A 640 x 448
+movie would take a quarter more: well inside 33 ms. Colour conversion was 2.9 ms a picture before it took each chroma
+sample's terms once a 2 x 2 block and pulled the input in one go.
 
 ### Graphics (`hw/`)
 
@@ -378,7 +456,8 @@ and the renderer's speed is measured without the game's.
 ### Not done yet
 
 The SPU2's DMA timing, rumble, the
-memory card's newer protocol (libmc 2.6 on), movies (IPU), the VU flags in macro mode, the FPU's exact rounding.
+memory card's newer protocol (libmc 2.6 on), the VU flags in macro mode, the FPU's exact rounding. The IPU's stall control
+(D_CTRL's STS with fromIPU) and its exact timing; a game's own movie player hasn't yet run on the IPU in a running game.
 
 ## Repositories and licences
 
