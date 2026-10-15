@@ -121,6 +121,9 @@ struct Gl
     GLsync (*FenceSync)(GLenum, GLbitfield);
     void (*WaitSync)(GLsync, GLbitfield, GLuint64);
     void (*DeleteSync)(GLsync);
+    // GL_NV_texture_barrier (macOS's GL has it): a draw may read the texels of the framebuffer's texture it writes, each its
+    // own, once written before the barrier. Null without it
+    void (*TextureBarrierNV)();
 };
 
 // The entry points (loaded the first time, with a context current); false when one is missing
