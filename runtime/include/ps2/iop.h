@@ -70,6 +70,11 @@ void IopSendCommand(u32 cid, std::vector<u8> packet, u32 eeAddress = 0, const vo
 using IopModuleStart = std::function<void(const std::vector<std::string>& args)>;
 void IopRegisterModule(const char* name, IopModuleStart start);
 
+// A module's thread that runs once a vertical blank (its loop round WaitVblankStart or WaitVblankEnd): the handler runs on the
+// game's side as each blank begins, between the game's instructions, so it may read and write the EE's memory as the IOP's DMA
+// would. Added as the module starts
+void IopOnVblank(std::function<void()> handler);
+
 // The IOP's memory (2 MB) at an address, and its heap (a module's AllocSysMemory and FreeSysMemory; the iop heap server's):
 // an allocation's address, and false from a free of something not allocated
 u8* IopMemory(u32 address);

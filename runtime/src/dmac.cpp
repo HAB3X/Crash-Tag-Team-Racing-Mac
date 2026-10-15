@@ -334,7 +334,9 @@ Run RunChain(int ch, Channel& c)
         u32 id = static_cast<u32>((tag >> 28) & 7);
         bool irq = (tag >> 31) & 1;
         u32 addr = static_cast<u32>((tag >> 32) & 0xFFFFFFF0u);
-        c.chcr = (c.chcr & 0xFFFF) | (static_cast<u32>(tag >> 16) & 0xFFFF0000u);
+        // CHCR's TAG: the upper half of the tag's first word (its PCE, ID and IRQ), as the last tag read left it. A game's
+        // handler reads the IRQ bit there to know its chain's last tag was reached (Biohazard Outbreak's VIF1 handler)
+        c.chcr = (c.chcr & 0xFFFF) | (static_cast<u32>(tag) & 0xFFFF0000u);
         if (guard < 64 || (guard >= 100000 && guard < 100040))
         {
             PS2_LOG(LogDma, "  tag at %08x: id %u qwc %u addr %08x irq %d", c.tadr, id, qwc, addr, irq ? 1 : 0);

@@ -3,6 +3,7 @@
 // zeros for the rest. Every call to a server or function not done here is logged
 // once with its arguments: that log is the list of what's left.
 #include "iop.h"
+#include "cri_adx.h"
 #include "ps2/sound.h"
 
 #include <algorithm>
@@ -31,6 +32,8 @@ std::map<std::string, IopModuleStart>& GameModules()
     static std::map<std::string, IopModuleStart> m;
     return m;
 }
+// The modules' vertical blank handlers (IopOnVblank), in the order they were added
+std::vector<std::function<void()>> g_vblankHandlers;
 
 void Dump(const RpcCall& c)
 {
@@ -617,6 +620,16 @@ void IopRegisterServer(u32 sid, const char* name, RpcServer server) { Registry()
 
 void IopRegisterModule(const char* name, IopModuleStart start) { GameModules()[name] = std::move(start); }
 
+void IopOnVblank(std::function<void()> handler) { g_vblankHandlers.push_back(std::move(handler)); }
+
+void IopVblank()
+{
+    for (const auto& handler : g_vblankHandlers)
+    {
+        handler();
+    }
+}
+
 u8* IopMemory(u32 address) { return IopMem() + (address & (IopRamSize - 1)); }
 
 u8* EeMemory(u32 address) { return Host(address & 0x1FFFFFFF); }
@@ -638,7 +651,7 @@ const char* IopServerName(u32 sid)
     return "?";
 }
 
-void IopServersInit() {}
+void IopServersInit() { CriAdx::Register(); }
 
 void IopSetImage(const std::string& reset)
 {

@@ -273,6 +273,9 @@ class Program:
 
     def analyse(self):
         starts = {self.code.entry} if self.code.entry is not None else set()
+        # The text's first word begins a function (an overlay has no entry, and nothing may point at its first function)
+        if self.words and self.words[0] != 0:
+            starts.add(self.text_start)
         starts |= set(self.config.get("extra_functions", []))
         not_starts = set(self.config.get("not_functions", []))
         for i in self.insns:
