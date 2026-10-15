@@ -2,6 +2,7 @@
 // the CD/DVD driver, the memory card (mcserv.cpp), the pads (padman.cpp), and stand-ins answering zeros for the rest. Every call to a server or function not done here is logged
 // once with its arguments: that log is the list of what's left.
 #include "iop.h"
+#include "cri_adx.h"
 #include "ps2/sound.h"
 
 #include <algorithm>
@@ -644,7 +645,7 @@ const char* IopServerName(u32 sid)
     return "?";
 }
 
-void IopServersInit() {}
+void IopServersInit() { CriAdx::Register(); }
 
 void IopSetImage(const std::string& reset)
 {
