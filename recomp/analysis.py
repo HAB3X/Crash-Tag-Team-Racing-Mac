@@ -273,9 +273,12 @@ class Program:
 
     def analyse(self):
         starts = {self.code.entry} if self.code.entry is not None else set()
-        # The text's first word begins a function (an overlay has no entry, and nothing may point at its first function)
-        if self.words and self.words[0] != 0:
-            starts.add(self.text_start)
+        # The text's first code (after any zero padding) begins a function: an overlay has no entry, and nothing in it may
+        # point at its first function (Biohazard Outbreak's overlays begin with 0x40 zero bytes, then their entry, which the
+        # game calls through a pointer of its own)
+        first = next((n for n, w in enumerate(self.words) if w != 0), None)
+        if first is not None:
+            starts.add(self.text_start + 4 * first)
         starts |= set(self.config.get("extra_functions", []))
         not_starts = set(self.config.get("not_functions", []))
         for i in self.insns:

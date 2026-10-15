@@ -69,6 +69,14 @@ class OverlayTest(unittest.TestCase):
         self.assertIn("ps2_call(c, 0x00600000u);", c)
 
 
+class PaddedOverlayTest(unittest.TestCase):
+    def test_first_code_after_padding_is_a_function(self):
+        # 0x40 zero bytes, then the overlay's entry, which nothing in the overlay calls or points at
+        code = overlay(bytes(0x40) + words(addiu(2, 0, 1), JR_RA, NOP, NOP))
+        functions = Program(code, {}).analyse()
+        self.assertEqual([s for s, _ in functions], [0x500080])
+
+
 class CheckWordsTest(unittest.TestCase):
     def test_words_tell_overlays_apart(self):
         a = overlay(words(addiu(2, 0, 1), JR_RA, NOP, NOP))
