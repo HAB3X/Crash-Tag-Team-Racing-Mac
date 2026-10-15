@@ -376,13 +376,48 @@ void LoadBindings()
     }
 }
 
+// The keys and mouse buttons --key holds now (bindings.txt's names), as the keyboard's state and mouse buttons
+std::vector<bool> g_scriptedKeys(SDL_SCANCODE_COUNT, false);
+SDL_MouseButtonFlags g_scriptedMouse = 0;
+
+void ScriptedKeys(double t)
+{
+    std::fill(g_scriptedKeys.begin(), g_scriptedKeys.end(), false);
+    g_scriptedMouse = 0;
+    for (const Options::KeyPress& k : g_options.keys)
+    {
+        if (t < k.at || t >= k.at + k.hold)
+        {
+            continue;
+        }
+        for (const std::string& name : k.keys)
+        {
+            int key = KeyFromName(name);
+            if (key >= MouseBase)
+            {
+                g_scriptedMouse |= SDL_BUTTON_MASK(key - MouseBase);
+            }
+            else if (key > SDL_SCANCODE_UNKNOWN && key < SDL_SCANCODE_COUNT)
+            {
+                g_scriptedKeys[static_cast<size_t>(key)] = true;
+            }
+            else
+            {
+                Log("--key: no key \"%s\"", name.c_str());
+            }
+            g_lastKeyboard = true;
+        }
+    }
+}
+
 bool Held(int key, const bool* keyboard)
 {
     if (key >= MouseBase)
     {
-        return (g_mouse & ~g_ignoredMouse & SDL_BUTTON_MASK(key - MouseBase)) != 0;
+        return ((g_mouse | g_scriptedMouse) & ~g_ignoredMouse & SDL_BUTTON_MASK(key - MouseBase)) != 0;
     }
-    return key > SDL_SCANCODE_UNKNOWN && key < SDL_SCANCODE_COUNT && keyboard[key] && !g_ignoredKeys[static_cast<size_t>(key)];
+    return key > SDL_SCANCODE_UNKNOWN && key < SDL_SCANCODE_COUNT &&
+           (keyboard[key] || g_scriptedKeys[static_cast<size_t>(key)]) && !g_ignoredKeys[static_cast<size_t>(key)];
 }
 
 // A key of the PC menus' (theirs only: it presses nothing of the PS2's)
@@ -559,6 +594,7 @@ void InputUpdate(double t, SDL_Window* window)
     {
         pressed |= g_synthButtons;
     }
+    ScriptedKeys(t);
     static size_t clickNext = 0;
     while (clickNext < g_options.clicks.size() && t >= g_options.clicks[clickNext].at)
     {
@@ -604,10 +640,12 @@ void InputUpdate(double t, SDL_Window* window)
     {
         pressed = 0;
     }
-    if (window != nullptr && !menus)
+    // The keys (headless, without a window, only --key's)
+    if ((window != nullptr || !g_options.keys.empty()) && !menus)
     {
-        const bool* keyboard = SDL_GetKeyboardState(nullptr);
-        g_mouse = SDL_GetMouseState(nullptr, nullptr);
+        static const bool noKeys[SDL_SCANCODE_COUNT] = {};
+        const bool* keyboard = window != nullptr ? SDL_GetKeyboardState(nullptr) : noKeys;
+        g_mouse = window != nullptr ? SDL_GetMouseState(nullptr, nullptr) : 0;
         ForgetReleased(keyboard);
         bool walkHeld = false;
         for (const Action& a : g_actions)

@@ -271,7 +271,8 @@ by mode), and binding sets the player switches between (the game knows its mode;
 
 A game can take typed text (its `typing` hook): the keyboard then
 types instead (`ps2_take_typed`), and the game's `vblank` hook puts it in its memory. Presses can be scripted with `--press
-30:start,31:cross` and typing with `--type 41:NAME<enter>` for headless runs. Scripted presses and
+30:start,31:cross`, the keyboard and mouse with `--key 30:W:2,31:Space+Mouse Left` (bindings.txt's names; held through the
+bindings as the player's keys, with or without a window), and typing with `--type 41:NAME<enter>` for headless runs. Scripted presses and
 `--snapshot-every`/`--snapshot-at` count the game's time (its vblanks), not the wall clock's, so a script lands on the same
 frames however fast the host draws and loads. The memory cards are folders, `port0` and `port1`, in `--memcards DIR` (by default
 `~/Library/Application Support/PS2 Native Runtime/<executable>/memcards`): port 0's card is always in, port 1's when its folder

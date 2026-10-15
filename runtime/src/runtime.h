@@ -182,6 +182,14 @@ struct Options
         u32 buttons;
     };
     std::vector<Press> presses;
+    // Keys and mouse buttons held at given times (seconds of game time), by bindings.txt's names, as if the player held them
+    struct KeyPress
+    {
+        double at;
+        double hold;
+        std::vector<std::string> keys;
+    };
+    std::vector<KeyPress> keys;
     // Text typed at given times (seconds of game time), as the keyboard types it while the game takes text
     std::vector<std::pair<double, std::string>> typed;
     // Mouse clicks at given times (seconds of game time), at places in the picture (0-1 across and down)
