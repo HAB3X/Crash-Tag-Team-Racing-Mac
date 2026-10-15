@@ -4,6 +4,16 @@
 void CttrRegisterRadIop();
 void CttrRegisterAudio();
 void CttrPcText();
+void CttrControlsVblank();
+void CttrTypingVblank();
+void CttrMenusVblank(int menu);
+int CttrTyping();
+int CttrMode();
+int CttrMenu();
+const Ps2GameControl* CttrControls();
+int CttrControlCount();
+const char* const* CttrModes();
+int CttrModeCount();
 
 // Before the boot: the game's own IOP modules (src/radiop.cpp: Bink's; src/audio.cpp: Radical's audio), and its texts said as
 // a computer's (src/pctext.cpp)
@@ -18,20 +28,36 @@ static void CttrInit()
     // stack's Ethernet frames (libeenet's ent_smap on the EE) to the Mac and back. Not a "no adapter" answer.
 }
 
+// At each vertical blank, on the game's side
+static void CttrVblank()
+{
+    CttrControlsVblank();
+    CttrTypingVblank();
+    CttrMenusVblank(CttrMenu());
+}
+
 int main(int argc, char** argv)
 {
+    // The PC controls in three modes, the menus, on foot and driving (src/controls.cpp), names typed (src/typing.cpp) and the
+    // mouse on the menus (src/menus.cpp). The PC menus are the runtime's own: Escape opens them (and a gamepad's Back, unless
+    // it's set to be Select), and Return is the game's Start, its pause
     static const Ps2GameInfo game = {"Crash Tag Team Racing (USA)",
                                      "SLUS_211.91",
                                      4928124,
                                      CttrInit,
-                                     nullptr,
-                                     nullptr,
-                                     nullptr,
+                                     CttrTyping,
+                                     CttrVblank,
+                                     CttrMenu,
                                      nullptr,
                                      0,
                                      nullptr,
                                      0,
                                      "Crash Tag Team Racing",
-                                     1};
+                                     0,
+                                     CttrControls(),
+                                     CttrControlCount(),
+                                     CttrModes(),
+                                     CttrModeCount(),
+                                     CttrMode};
     return ps2_main(argc, argv, &game);
 }

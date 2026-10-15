@@ -10,8 +10,13 @@ longjmp = ["0x4f2e90"]
 
 [overrides]
 # address = "host function": replaced by the runtime or by src/
-"0x3b4eb0" = "CttrFiberStart"   # a fiber's first run on its own stack (src/fibers.cpp)
-"0x370508" = "CttrReadLanguage" # a text bible's language read, its lines about the PS2 said as a computer's (src/pctext.cpp)
+"0x3b4eb0" = "CttrFiberStart"      # a fiber's first run on its own stack (src/fibers.cpp)
+"0x196560" = "CttrControllerValue" # Controller::GetValue: which controls the game reads, its mode (src/controls.cpp)
+"0x20f458" = "CttrNameScreenUpdate"  # Name Selection's update: typed names put in (src/typing.cpp)
+"0x304028" = "CttrMenuCreate"        # pure3d's frontend menus made and destroyed, Text::Draw: the menus' lines under the
+"0x304080" = "CttrMenuDestroy"       # mouse (src/menus.cpp), the control hints said for the device (src/hints.cpp)
+"0x30c488" = "CttrTextDraw"
+"0x370508" = "CttrReadLanguage"    # a text bible's language read, its lines about the PS2 said as a computer's (src/pctext.cpp)
 
 [vu1]
 # VU1's programs, bare code in .vutext uploaded by the renderer's own DMA chains (REF tags into .vutext): the main set at micro

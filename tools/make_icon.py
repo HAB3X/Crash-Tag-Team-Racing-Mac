@@ -3,7 +3,8 @@
 texture), drawn large on a rounded square of blue, the way the Crash Twinsanity Mac port's icon is made. Nothing of the game's
 goes into the repository: the icon is made in the build folder from your own disc.
 
-    tools/make_icon.py DISC [--icon PATH] [--out build/icon] [--yaw DEGREES] [--pitch DEGREES] [--light] [--smooth]
+    tools/make_icon.py DISC [--icon PATH] [--runtime DIR] [--out build/icon] [--yaw DEGREES] [--pitch DEGREES] [--light]
+                       [--smooth]
 
 --icon is the icon's file on the disc (Wrath of Cortex's STUFF/CRASH.ICO, Crash's head, by default), or a file in one of the
 disc's Radical archives as ARCHIVE:NAME (Crash Tag Team Racing's COMMON/COMMON.RCF:art/memcard/crash.ico, a crate with
@@ -36,9 +37,10 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_TOOLS = [ROOT / "ps2-native-runtime/tools", ROOT.parent / "ps2-native-runtime/tools"]
 
 
-def read_disc_file(disc, path):
-    """A file on the disc, or ARCHIVE:NAME, a file in a Radical archive (an .RCF) on the disc"""
-    for tools in RUNTIME_TOOLS:
+def read_disc_file(disc, path, runtime=None):
+    """A file on the disc, or ARCHIVE:NAME, a file in a Radical archive (an .RCF) on the disc; the disc read with the
+    runtime's tools/disc.py (the runtime given, or in this repository, or next to it)"""
+    for tools in ([Path(runtime) / "tools"] if runtime else []) + RUNTIME_TOOLS:
         if (tools / "disc.py").exists():
             sys.path.insert(0, str(tools))
             break
@@ -225,16 +227,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("disc")
     parser.add_argument("--icon", default="STUFF/CRASH.ICO")
+    parser.add_argument("--runtime", help="the runtime's folder (its tools/disc.py reads the disc)")
     parser.add_argument("--out", default=str(ROOT / "build/icon"))
     parser.add_argument("--yaw", type=float, default=20)
     parser.add_argument("--pitch", type=float, default=0)
     parser.add_argument("--light", action="store_true", help="shade the model by a light (for flat vertex colours)")
     parser.add_argument("--smooth", action="store_true", help="blend the texture's texels (for a texture of one picture)")
-    parser.add_argument("--runtime-tools", help="the runtime's tools folder (the build passes it; else looked for next to this repository)")
     args = parser.parse_args()
-    if args.runtime_tools:
-        RUNTIME_TOOLS.insert(0, Path(args.runtime_tools))
-    positions, normals, uvs, colours, texture = parse_icon(read_disc_file(args.disc, args.icon))
+    positions, normals, uvs, colours, texture = parse_icon(read_disc_file(args.disc, args.icon, args.runtime))
     size = 1024
     # Drawn at twice the size and brought down, for smooth edges
     model = render(positions, normals, uvs, colours, texture, size * 2, args.yaw, args.pitch, args.light,
