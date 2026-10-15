@@ -469,6 +469,29 @@ void PresenterRun()
             lastVblanks = vblanks;
             nextFps = t + 1;
         }
+#ifdef PS2_TRACE_ENTER
+        {
+            // $PS2_TRACE_POKE=SECONDS:ADDRESS=VALUE (hex address and value): one guest word set at that time, for experiments
+            static int pokeState = 0;
+            static double pokeAt = 0;
+            static u32 pokeAddress = 0, pokeValue = 0;
+            if (pokeState == 0)
+            {
+                pokeState = 1;
+                const char* r = getenv("PS2_TRACE_POKE");
+                if (r != nullptr && sscanf(r, "%lf:%x=%x", &pokeAt, &pokeAddress, &pokeValue) == 3)
+                {
+                    pokeState = 2;
+                }
+            }
+            if (pokeState == 2 && t >= pokeAt)
+            {
+                Write32(pokeAddress, pokeValue);
+                Log("poke %08x = %08x at %.1f s", pokeAddress, pokeValue, t);
+                pokeState = 3;
+            }
+        }
+#endif
         if (!g_options.watch.empty() && t >= nextWatch)
         {
             std::string line;
@@ -489,6 +512,9 @@ void PresenterRun()
         if (g_options.runSeconds > 0 && t >= g_options.runSeconds)
         {
             Log("ran %.0f s: stopping", t);
+#ifdef PS2_TRACE_ENTER
+            TraceEnterDump();
+#endif
             const Ee::Vu1TranslationStats& vs = Ee::GetVu1TranslationStats();
             Log("VU1: %llu instructions translated, %llu interpreted%s", static_cast<unsigned long long>(vs.translatedInstructions),
                 static_cast<unsigned long long>(vs.interpretedInstructions),

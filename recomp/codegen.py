@@ -462,7 +462,7 @@ class FunctionEmitter:
         slot_labels = labels & delay_slots
         for a in slot_labels:
             labels.add(a + 4)
-        lines = [f"void {self.prefix}_{self.start:08x}(Ps2Cpu* c)", "{"]
+        lines = [f"void {self.prefix}_{self.start:08x}(Ps2Cpu* c)", "{", f"    PS2_ENTER(0x{self.start:08x}u);"]
         a_prev = None
         for a in reached:
             if a in delay_slots:

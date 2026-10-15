@@ -162,8 +162,29 @@ static inline u128 rd128(u32 a)
     memcpy(&v, ps2_mem + a, 16);
     return v;
 }
+// A build with PS2_TRACE_ENTER counts how often each recompiled function is entered (ps2_trace_enter), written to the file
+// named by $PS2_TRACE_FILE when the run ends (--run-seconds); the counts are of guest addresses, so an overlay's function and
+// the executable's at the same address share one. Without it, the macro is nothing.
+#ifdef PS2_TRACE_ENTER
+void ps2_trace_enter(u32 address);
+// $PS2_TRACE_WATCH=ADDRESS[:BYTES] (hex): the stores into the range are logged with the guest's call stack (the first 40)
+extern u32 ps2_watch_low, ps2_watch_size;
+void ps2_trace_store(u32 address, u64 value, int bytes);
+#define PS2_ENTER(address) ps2_trace_enter(address)
+#define PS2_STORE(a, v, n)                                                                                                     \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        if (PS2_UNLIKELY((u32)((a) + (n) - 1 - ps2_watch_low) < ps2_watch_size + (n) - 1))                                                                \
+            ps2_trace_store(a, v, n);                                                                                          \
+    } while (0)
+#else
+#define PS2_STORE(a, v, n) ((void)0)
+#define PS2_ENTER(address) ((void)0)
+#endif
+
 static inline void wr8(u32 a, u8 v)
 {
+    PS2_STORE(a, v, 1);
     if (PS2_UNLIKELY(PS2_IS_IO(a)))
         ps2_io_write8(a, v);
     else
@@ -171,6 +192,7 @@ static inline void wr8(u32 a, u8 v)
 }
 static inline void wr16(u32 a, u16 v)
 {
+    PS2_STORE(a, v, 2);
     if (PS2_UNLIKELY(PS2_IS_IO(a)))
         ps2_io_write16(a, v);
     else
@@ -178,6 +200,7 @@ static inline void wr16(u32 a, u16 v)
 }
 static inline void wr32(u32 a, u32 v)
 {
+    PS2_STORE(a, v, 4);
     if (PS2_UNLIKELY(PS2_IS_IO(a)))
         ps2_io_write32(a, v);
     else
@@ -185,6 +208,7 @@ static inline void wr32(u32 a, u32 v)
 }
 static inline void wr64(u32 a, u64 v)
 {
+    PS2_STORE(a, v, 8);
     if (PS2_UNLIKELY(PS2_IS_IO(a)))
         ps2_io_write64(a, v);
     else
@@ -192,6 +216,7 @@ static inline void wr64(u32 a, u64 v)
 }
 static inline void wr128(u32 a, u128 v)
 {
+    PS2_STORE(a, (u64)v, 16);
     if (PS2_UNLIKELY(PS2_IS_IO(a)))
         ps2_io_write128(a, v);
     else
@@ -297,6 +322,7 @@ void ps2_irq_service(Ps2Cpu* c);
         if (PS2_UNLIKELY(ps2_irq_pending))                                                                                     \
             ps2_irq_service(c);                                                                                                \
     } while (0)
+
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Integer division (the R5900's results for a zero divisor and for INT_MIN / -1)

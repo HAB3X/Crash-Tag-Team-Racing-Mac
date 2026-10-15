@@ -67,6 +67,9 @@ void Log(const char* format, ...) __attribute__((format(printf, 1, 2)));
 [[noreturn]] void Fatal(const char* format, ...) __attribute__((format(printf, 1, 2)));
 // The guest's call stack (from the host's) to the log
 void Backtrace();
+#ifdef PS2_TRACE_ENTER
+void TraceEnterDump();
+#endif
 // Logs a message once per key
 bool Once(const std::string& key);
 
