@@ -1474,6 +1474,9 @@ PromptStyle CurrentPrompts()
     }
 }
 
+// The prompts' style as the last frame of the presenter's found it, for the game's side (ps2_prompt_style)
+std::atomic<int> g_promptsNow{0};
+
 PromptStyle CurrentPadStyle()
 {
     if (g_promptChoice >= 2)
@@ -1743,6 +1746,7 @@ bool MenusEvent(const SDL_Event& e)
 
 void MenusFrame(double gameSeconds)
 {
+    g_promptsNow = static_cast<int>(CurrentPrompts());
     if (!g_options.ui.empty())
     {
         PlayScript(gameSeconds);
@@ -1864,3 +1868,10 @@ std::string PadControlText(PadControl control, PromptStyle style)
 }
 
 extern "C" void ps2_open_settings(void) { Ps2::Ui::g_settingsAsked = true; }
+
+extern "C" int ps2_prompt_style(void)
+{
+    // A style chosen is that one; the automatic one is the device used last, as the presenter found it
+    using namespace Ps2::Ui;
+    return g_promptChoice >= 1 && g_promptChoice <= 4 ? static_cast<int>(CurrentPrompts()) : g_promptsNow.load();
+}

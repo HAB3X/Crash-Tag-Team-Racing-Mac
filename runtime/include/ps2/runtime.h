@@ -131,6 +131,25 @@ extern "C"
     int
     ps2_take_typed(char* out, int max);
 
+// The style the player's prompts are in now, as the PC menus' Button prompts setting decides (the device used last, or always
+// one): 0 the keyboard and mouse, 1 PlayStation, 2 Xbox, 3 Nintendo Switch. Any thread
+#ifdef __cplusplus
+extern "C"
+#endif
+    int
+    ps2_prompt_style(void);
+
+// What the player presses for one of port 0's controls in the game's current mode, named for a prompt in a style (above): a
+// control is a PS2 button or several as --press names them ("cross", "l1"), "left" or "right" (a stick, all its directions),
+// or "dpad". On the keyboard, the first key bound to it ("Space"; a stick's or the d-pad's four keys "W/A/S/D", "WASD" and
+// "Arrows" for those); on a gamepad, its button's name in the style ("A", "Cross", "B", "LB", "Left stick", "D-pad"). Written to
+// out (with its 0, at most size bytes); its length, 0 when nothing presses it. The game's side, between its instructions
+#ifdef __cplusplus
+extern "C"
+#endif
+    int
+    ps2_control_name(const char* control, int style, char* out, int size);
+
 // Port 0's buttons (PS2 bits: cross is 1 << 14) pressed from the game's side for a while (seconds of game time)
 #ifdef __cplusplus
 extern "C"

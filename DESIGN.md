@@ -269,6 +269,10 @@ defaults (the mouse's clicks in a menu stay). Rejected: one set of keys per game
 per mode on its side (Controls would show the PS2's buttons, not what the keys do, and two keys on one button couldn't differ
 by mode), and binding sets the player switches between (the game knows its mode; the player shouldn't have to).
 
+A game's own prompts can follow the device as the PC menus' do: `ps2_prompt_style` is the style now (the Button prompts
+setting: the device used last, or always one), and `ps2_control_name` names what presses a control in the game's current mode in
+a style (the first key bound to it, a stick's four keys as "WASD" or "Arrows", or the gamepad's button in its style).
+
 A game can take typed text (its `typing` hook): the keyboard then
 types instead (`ps2_take_typed`), and the game's `vblank` hook puts it in its memory. Presses can be scripted with `--press
 30:start,31:cross`, the keyboard and mouse with `--key 30:W:2,31:Space+Mouse Left` (bindings.txt's names; held through the

@@ -17,6 +17,7 @@
 
 #include "ps2/runtime.h"
 #include "ui/menus.h"
+#include "ui/menusinternal.h"
 
 #include <SDL3/SDL.h>
 
@@ -962,6 +963,116 @@ extern "C" void ps2_press_buttons(uint32_t buttons, double seconds)
 }
 
 extern "C" int ps2_any_input_held(void) { return g_anyHeld ? 1 : 0; }
+
+namespace
+{
+// The keys of a stick's (or the d-pad's) four directions in the current mode, as one name: "WASD", "Arrows", or the first keys
+// joined ("I/J/K/L"; the bound ones only)
+std::string FourKeys(const int (&directions)[4][3], int mode)
+{
+    std::string keys[4];
+    for (int d = 0; d < 4; d++)
+    {
+        for (const Action& a : g_actions)
+        {
+            bool match = directions[d][0] >= 0 ? (a.stick == directions[d][0] && a.axis == directions[d][1] &&
+                                                  a.sign == directions[d][2])
+                                               : (a.stick == -1 && a.button == static_cast<u32>(directions[d][1]));
+            if (match && (a.mode < 0 || a.mode == mode) && !a.keys.empty() && keys[d].empty())
+            {
+                keys[d] = KeyName(a.keys[0]);
+            }
+        }
+    }
+    if (keys[0] == "W" && keys[1] == "A" && keys[2] == "S" && keys[3] == "D")
+    {
+        return "WASD";
+    }
+    if (keys[0] == "Up" && keys[1] == "Left" && keys[2] == "Down" && keys[3] == "Right")
+    {
+        return "Arrows";
+    }
+    // Keys of their own for up and down (a car's stick, where W and S are the pedals): its left and right, which it's mostly for
+    if (!keys[1].empty() && !keys[3].empty())
+    {
+        return keys[1] + "/" + keys[3];
+    }
+    std::string joined;
+    for (const std::string& k : keys)
+    {
+        if (!k.empty())
+        {
+            joined += (joined.empty() ? "" : "/") + k;
+        }
+    }
+    return joined;
+}
+
+std::string ControlName(const std::string& control, int style)
+{
+    using P = Ui::PadControl;
+    int mode = GameControls() && g_game->mode != nullptr ? g_game->mode() : 0;
+    // A stick's directions (up, left, down, right) and the d-pad's buttons
+    static const int left[4][3] = {{0, 1, -1}, {0, 0, -1}, {0, 1, 1}, {0, 0, 1}};
+    static const int right[4][3] = {{1, 1, -1}, {1, 0, -1}, {1, 1, 1}, {1, 0, 1}};
+    static const int dpad[4][3] = {{-1, Up, 0}, {-1, Left, 0}, {-1, Down, 0}, {-1, Right, 0}};
+    if (style == static_cast<int>(Ui::PromptStyle::Keyboard))
+    {
+        if (control == "left" || control == "right" || control == "dpad")
+        {
+            // The d-pad and the left stick move alike: one with no keys is said as the other
+            std::string keys = FourKeys(control == "left" ? left : control == "right" ? right : dpad, mode);
+            if (keys.empty() && control != "right")
+            {
+                keys = FourKeys(control == "left" ? dpad : left, mode);
+            }
+            return keys;
+        }
+        u32 buttons = ButtonsFromNames(control);
+        for (const Action& a : g_actions)
+        {
+            if (a.stick == -1 && a.button == buttons && (a.mode < 0 || a.mode == mode) && !a.keys.empty())
+            {
+                return KeyName(a.keys[0]);
+            }
+        }
+        return "";
+    }
+    auto pad = static_cast<Ui::PromptStyle>(style);
+    bool ps = pad == Ui::PromptStyle::PlayStation, sw = pad == Ui::PromptStyle::Switch;
+    if (control == "left" || control == "right")
+    {
+        return control == "left" ? "Left stick" : "Right stick";
+    }
+    if (control == "dpad")
+    {
+        return "D-pad";
+    }
+    P p = PadFor(ButtonsFromNames(control));
+    switch (p)
+    {
+    case P::South: return ps ? "Cross" : sw ? "B" : "A";
+    case P::East: return ps ? "Circle" : sw ? "A" : "B";
+    case P::West: return ps ? "Square" : sw ? "Y" : "X";
+    case P::North: return ps ? "Triangle" : sw ? "X" : "Y";
+    case P::None: return "";
+    default: return Ui::PadControlText(p, pad);
+    }
+}
+}
+
+extern "C" int ps2_control_name(const char* control, int style, char* out, int size)
+{
+    std::string name = ControlName(control, style);
+    if (size <= 0)
+    {
+        return 0;
+    }
+    int n = std::min(static_cast<int>(name.size()), size - 1);
+    std::memcpy(out, name.data(), static_cast<size_t>(n));
+    out[n] = 0;
+    return n;
+}
 
 // The PC menus' overlay draws the prompt over the picture
 extern "C" void ps2_show_prompt(const char* text)
