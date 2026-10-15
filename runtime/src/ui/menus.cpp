@@ -630,8 +630,18 @@ void BuildOptions()
     Row header;
     header.kind = RowHeader;
     controls.rows.push_back(header);
+    std::string group;
     for (int a = 0; a < InputActionCount(); a++)
     {
+        // A game's controls under their modes' headings
+        if (InputActionGroup(a) != group)
+        {
+            group = InputActionGroup(a);
+            Row heading;
+            heading.kind = RowHeading;
+            heading.label = group;
+            controls.rows.push_back(heading);
+        }
         Row row;
         row.kind = RowBinding;
         row.label = InputActionLabel(a);

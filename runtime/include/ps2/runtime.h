@@ -29,6 +29,22 @@ typedef struct Ps2GameAction
     void (*run)(void);            // chosen: called on the game's side, between its instructions, with the menu closed
 } Ps2GameAction;
 
+// A game's own control on the keyboard and mouse (the PC menus' Controls and bindings.txt), for a game the runtime's defaults
+// (the Crash Twinsanity port's) don't suit, or whose controls differ by what's being played (on foot, driving...): what it
+// presses on port 0's controller, its keys by default, and its mode. Only the controls of the mode the game is in
+// (Ps2GameInfo::mode) press anything, so a key can be a different control in each mode, and a key taken for a control is
+// taken from another control of its mode only. The runtime adds the PC menus' key (Escape) to them
+typedef struct Ps2GameControl
+{
+    const char* name;   // its name in bindings.txt ("drive_accelerate")
+    const char* label;  // its row in Controls ("Accelerate")
+    const char* press;  // what it presses: PS2 buttons as --press names them, joined by + ("cross", "l1", "cross+start"), a
+                        // stick's direction ("left_up", "left_down", "left_left", "left_right", "right_up", "right_down",
+                        // "right_left", "right_right"), or "walk" (the left stick at half, on and off)
+    const char* keys;   // its keys by default as bindings.txt names them, joined by commas ("W, Up"; "" for none)
+    int mode;           // its mode: an index into Ps2GameInfo::modes
+} Ps2GameControl;
+
 typedef struct Ps2GameInfo
 {
     const char* title;
@@ -59,6 +75,16 @@ typedef struct Ps2GameInfo
     // actions) open when the game asks (ps2_open_settings, e.g. from a line of its own options menu), and going back from them
     // goes back to the game
     int ownPause;
+    // Optional. The game's own keyboard and mouse controls (above) instead of the runtime's, and their modes: the modes' names
+    // (Controls' headings, in this order) and the mode the game is in now (an index into modes; asked on the presenter's
+    // thread at each input update, so reading the game's memory is fine). A game with controls of its own decides what Return
+    // and Backspace are in its menus: the runtime's own (Return is cross and Backspace triangle while menu says a menu is up)
+    // are for its defaults
+    const Ps2GameControl* controls;
+    int controlCount;
+    const char* const* modes;
+    int modeCount;
+    int (*mode)(void);
 } Ps2GameInfo;
 
 // A prompt shown over the picture near its bottom (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down;

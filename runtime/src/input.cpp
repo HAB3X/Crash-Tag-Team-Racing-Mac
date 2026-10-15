@@ -72,7 +72,8 @@ constexpr int MouseX1 = MouseBase + SDL_BUTTON_X1;
 constexpr int MouseX2 = MouseBase + SDL_BUTTON_X2;
 
 // The actions: a PS2 button, a stick's direction (stick 0 left, 1 right; axis 0 x, 1 y; sign), walking (-2) or the PC menus
-// (-3); the PC menus' Controls table names each and shows the gamepad's control for it
+// (-3); the PC menus' Controls table names each and shows the gamepad's control for it. A game's own control has its mode
+// (an index into Ps2GameInfo::modes); the runtime's have none (-1: every mode)
 struct Action
 {
     const char* name;
@@ -84,10 +85,104 @@ struct Action
     std::vector<int> keys;
     const char* label;
     Ui::PadControl pad;
+    int mode = -1;
 };
+
+int KeyFromName(std::string name);
+
+bool GameControls() { return g_game != nullptr && g_game->controls != nullptr && g_game->controlCount > 0; }
+
+// The gamepad's control for a PS2 button (the first of several)
+Ui::PadControl PadFor(u32 buttons)
+{
+    using P = Ui::PadControl;
+    const struct
+    {
+        u32 bit;
+        P pad;
+    } pads[] = {{Cross, P::South},          {Circle, P::East},          {Square, P::West},        {Triangle, P::North},
+                {L1, P::LeftShoulder},      {R1, P::RightShoulder},     {L2, P::LeftTrigger},     {R2, P::RightTrigger},
+                {Start, P::Start},          {Select, P::BackAsSelect},  {L3, P::LeftStick},       {R3, P::RightStick},
+                {Up, P::DpadUp},            {Down, P::DpadDown},        {Left, P::DpadLeft},      {Right, P::DpadRight}};
+    for (const auto& p : pads)
+    {
+        if (buttons & p.bit)
+        {
+            return p.pad;
+        }
+    }
+    return P::None;
+}
+
+// A game's control as an action: what it presses (a stick's direction, walking or buttons) and its default keys
+Action GameAction(const Ps2GameControl& control)
+{
+    using P = Ui::PadControl;
+    Action a{control.name, 0, -1, 0, 0, {}, {}, control.label, P::None, control.mode};
+    const struct
+    {
+        const char* name;
+        int stick;
+        int axis;
+        int sign;
+        P pad;
+    } sticks[] = {{"left_up", 0, 1, -1, P::LeftStickUp},     {"left_down", 0, 1, 1, P::LeftStickDown},
+                  {"left_left", 0, 0, -1, P::LeftStickLeft}, {"left_right", 0, 0, 1, P::LeftStickRight},
+                  {"right_up", 1, 1, -1, P::RightStickUp},   {"right_down", 1, 1, 1, P::RightStickDown},
+                  {"right_left", 1, 0, -1, P::RightStickLeft}, {"right_right", 1, 0, 1, P::RightStickRight}};
+    std::string press = control.press;
+    bool found = false;
+    for (const auto& stick : sticks)
+    {
+        if (press == stick.name)
+        {
+            a.stick = stick.stick;
+            a.axis = stick.axis;
+            a.sign = stick.sign;
+            a.pad = stick.pad;
+            found = true;
+        }
+    }
+    if (press == "walk")
+    {
+        a.stick = -2;
+    }
+    else if (!found)
+    {
+        a.button = ButtonsFromNames(press);
+        a.pad = PadFor(a.button);
+    }
+    std::stringstream keys(control.keys != nullptr ? control.keys : "");
+    std::string key;
+    while (std::getline(keys, key, ','))
+    {
+        int k = KeyFromName(key);
+        if (k >= 0)
+        {
+            a.defaults.push_back(k);
+        }
+        else if (key.find_first_not_of(" \t") != std::string::npos)
+        {
+            Log("the game's control %s: no key \"%s\"", control.name, key.c_str());
+        }
+    }
+    return a;
+}
+
+// The PC menus' key: the runtime's own action, in every mode
+Action MenuAction() { return {"menu", 0, -3, 0, 0, {SDL_SCANCODE_ESCAPE}, {}, "PC menu", Ui::PadControl::BackAsMenu}; }
 
 std::vector<Action> MakeActions()
 {
+    if (GameControls())
+    {
+        std::vector<Action> actions{MenuAction()};
+        for (int n = 0; n < g_game->controlCount; n++)
+        {
+            actions.push_back(GameAction(g_game->controls[n]));
+        }
+        return actions;
+    }
     using P = Ui::PadControl;
     return {
         {"move_forward", 0, 0, 1, -1, {SDL_SCANCODE_W}, {}, "Move forward", P::LeftStickUp},
@@ -115,7 +210,7 @@ std::vector<Action> MakeActions()
         {"left", Left, -1, 0, 0, {SDL_SCANCODE_LEFT}, {}, "D-pad left", P::DpadLeft},
         {"right", Right, -1, 0, 0, {SDL_SCANCODE_RIGHT}, {}, "D-pad right", P::DpadRight},
         {"walk", 0, -2, 0, 0, {SDL_SCANCODE_LCTRL}, {}, "Walk", P::None},
-        {"menu", 0, -3, 0, 0, {SDL_SCANCODE_ESCAPE}, {}, "PC menu", P::BackAsMenu},
+        MenuAction(),
     };
 }
 
@@ -211,8 +306,14 @@ void WriteBindings()
     out << "# The keyboard and mouse controls: an action, then its keys (as SDL names them: Space, Left Shift, J, Up) or\n"
            "# mouse buttons (Mouse Left, Mouse Middle, Mouse Right, Mouse 4, Mouse 5), separated by commas. menu opens the PC\n"
            "# menus. The PC menus' Controls change them too. Delete this file for the defaults.\n";
+    int mode = -1;
     for (const Action& a : g_actions)
     {
+        if (a.mode != mode && a.mode >= 0 && a.mode < g_game->modeCount)
+        {
+            out << "# " << g_game->modes[a.mode] << "\n";
+        }
+        mode = a.mode;
         out << a.name << " =";
         for (size_t n = 0; n < a.keys.size(); n++)
         {
@@ -374,7 +475,12 @@ u32 ButtonsFromNames(const std::string& names)
     return bits;
 }
 
-void InputInit() { LoadBindings(); }
+void InputInit()
+{
+    // The game's own controls, now that the game is known
+    g_actions = MakeActions();
+    LoadBindings();
+}
 
 void InputPicture(float x, float y, float w, float h) { g_picture = {x, y, w, h}; }
 
@@ -483,6 +589,10 @@ void InputUpdate(double t, SDL_Window* window)
     }
     g_typing = typing;
     g_menu = g_game != nullptr && g_game->menu != nullptr && g_game->menu() != 0;
+    // The game's mode: only its controls press anything (and the runtime's own, in every mode)
+    int mode = GameControls() && g_game->mode != nullptr ? g_game->mode() : 0;
+    // The runtime's menus' keys (Return is cross, Backspace triangle) are for its own controls: a game's are its own
+    bool remap = g_menu && !GameControls();
     // The PC menus up: the game gets nothing (it's paused); what's held as they close waits to be let go
     bool menus = Ui::MenusOpen();
     if (window != nullptr && (menus || g_ignoreAll))
@@ -502,6 +612,10 @@ void InputUpdate(double t, SDL_Window* window)
         bool walkHeld = false;
         for (const Action& a : g_actions)
         {
+            if (a.mode >= 0 && a.mode != mode)
+            {
+                continue;
+            }
             bool held = false;
             for (int key : a.keys)
             {
@@ -512,7 +626,7 @@ void InputUpdate(double t, SDL_Window* window)
                     continue;
                 }
                 // In a menu the mouse's left button clicks (ps2_take_click), Return confirms and Backspace goes back
-                if (g_menu && (key == MouseLeft || key == SDL_SCANCODE_RETURN || key == SDL_SCANCODE_BACKSPACE))
+                if ((g_menu && key == MouseLeft) || (remap && (key == SDL_SCANCODE_RETURN || key == SDL_SCANCODE_BACKSPACE)))
                 {
                     continue;
                 }
@@ -549,11 +663,11 @@ void InputUpdate(double t, SDL_Window* window)
                 pressed |= a.button;
             }
         }
-        if (g_menu && !typing && Held(SDL_SCANCODE_RETURN, keyboard))
+        if (remap && !typing && Held(SDL_SCANCODE_RETURN, keyboard))
         {
             pressed |= Cross;
         }
-        if (g_menu && !typing && Held(SDL_SCANCODE_BACKSPACE, keyboard))
+        if (remap && !typing && Held(SDL_SCANCODE_BACKSPACE, keyboard))
         {
             pressed |= Triangle;
         }
@@ -702,6 +816,12 @@ std::string InputActionLabel(int action)
 
 Ui::PadControl InputActionPad(int action) { return g_actions[static_cast<size_t>(action)].pad; }
 
+std::string InputActionGroup(int action)
+{
+    int mode = g_actions[static_cast<size_t>(action)].mode;
+    return mode >= 0 && mode < g_game->modeCount ? g_game->modes[mode] : "";
+}
+
 int InputActionKey(int action, int slot)
 {
     const std::vector<int>& keys = g_actions[static_cast<size_t>(action)].keys;
@@ -726,8 +846,15 @@ int InputBindKey(int action, int slot, int key)
     std::vector<int>& keys = g_actions[static_cast<size_t>(action)].keys;
     int old = slot < static_cast<int>(keys.size()) ? keys[static_cast<size_t>(slot)] : -1;
     int swapped = -1;
+    int mode = g_actions[static_cast<size_t>(action)].mode;
     for (size_t other = 0; other < g_actions.size(); other++)
     {
+        // A key can be a different control in each of a game's modes
+        int theirMode = g_actions[other].mode;
+        if (mode >= 0 && theirMode >= 0 && mode != theirMode)
+        {
+            continue;
+        }
         std::vector<int>& theirs = g_actions[other].keys;
         for (size_t n = 0; n < theirs.size(); n++)
         {

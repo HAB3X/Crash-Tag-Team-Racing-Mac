@@ -256,7 +256,20 @@ Port 0's controller is the keyboard and mouse, and the first gamepad SDL3 finds 
 are the Crash Twinsanity native port's PC controls: W A S D move (a stick, diagonals as a stick's), Space is cross, the mouse's
 left button or J square, Left Shift or K circle, Tab or I triangle, Z and C the shoulders, Return start, Left Ctrl toggles
 walking, Q and E the right stick, and the arrows the d-pad; Escape opens the PC menus (below). Every one can be changed in the
-PC menus' Controls or in the settings folder's `bindings.txt` (written with the defaults the first time). A game can take typed text (its `typing` hook): the keyboard then
+PC menus' Controls or in the settings folder's `bindings.txt` (written with the defaults the first time).
+
+A game whose controls those defaults don't suit gives its own (`Ps2GameInfo::controls`, `Ps2GameControl`): each a PS2 button
+(or several), a stick's direction or walking, with its label, its default keys and its mode. The modes are the game's (e.g.
+Crash Tag Team Racing's menus, on foot and driving, where W is the stick on foot but cross, the accelerator, in a car): the game
+says which it's in (`Ps2GameInfo::mode`, asked at each input update), only that mode's controls press anything, a key can be a
+different control in each mode (rebinding moves a key between controls of one mode only), and Controls lists them under their
+modes' headings (bindings.txt under comments). The runtime adds its menu key to them. Such a game decides Return and Backspace
+in its menus itself: the runtime's Return-is-cross and Backspace-is-triangle while `menu` says a menu is up are for its own
+defaults (the mouse's clicks in a menu stay). Rejected: one set of keys per game with the game rewriting the pad's buttons
+per mode on its side (Controls would show the PS2's buttons, not what the keys do, and two keys on one button couldn't differ
+by mode), and binding sets the player switches between (the game knows its mode; the player shouldn't have to).
+
+A game can take typed text (its `typing` hook): the keyboard then
 types instead (`ps2_take_typed`), and the game's `vblank` hook puts it in its memory. Presses can be scripted with `--press
 30:start,31:cross` and typing with `--type 41:NAME<enter>` for headless runs. Scripted presses and
 `--snapshot-every`/`--snapshot-at` count the game's time (its vblanks), not the wall clock's, so a script lands on the same

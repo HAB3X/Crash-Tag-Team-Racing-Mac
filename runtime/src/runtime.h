@@ -276,6 +276,8 @@ bool InputLastKeyboard();
 int InputActionCount();
 std::string InputActionLabel(int action);
 Ui::PadControl InputActionPad(int action);
+// The heading an action is under: its mode's name (a game's own controls), or "" (the runtime's)
+std::string InputActionGroup(int action);
 int InputActionKey(int action, int slot);
 std::string InputKeyName(int key);
 // A mouse button as a key (-1: none bindable)
