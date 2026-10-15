@@ -33,7 +33,7 @@ void Usage(const char* program)
             "usage: %s --disc IMAGE [--headless] [--snapshots DIR] [--snapshot-every S] [--snapshot-at S,S,...]\n"
             "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq]\n"
             "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--settings DIR]\n"
-            "          [--press S:BUTTON[+BUTTON][:HOLD],...]\n"
+            "          [--press S:BUTTON[+BUTTON][:HOLD],...] [--key S:KEY[+KEY][:HOLD],...]\n"
             "          [--type S:TEXT] [--click S:X,Y] [--ui S:KEY,KEY,...]\n"
             "          [--fps] [--gs hardware|software] [--scale 1-8] [--texture-upscale 0|2|4] [--mute] [--audio-dump FILE.wav]\n"
             "          [--gs-record S:VBLANKS:FILE] [--gs-replay FILE[:PASSES]]\n",
@@ -269,6 +269,43 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
         else if (a == "--watch-every")
         {
             g_options.watchEvery = atof(next().c_str());
+        }
+        else if (a == "--key")
+        {
+            // 30:Space, 31.5:W+Left Shift:0.5 (held 0.15 s unless said): bindings.txt's names
+            std::string list = next();
+            size_t start = 0;
+            while (start < list.size())
+            {
+                size_t comma = list.find(',', start);
+                std::string item = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                size_t c1 = item.find(':');
+                size_t c2 = c1 == std::string::npos ? std::string::npos : item.find(':', c1 + 1);
+                if (c1 != std::string::npos)
+                {
+                    Options::KeyPress k;
+                    k.at = atof(item.substr(0, c1).c_str());
+                    std::string names = item.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1);
+                    size_t from = 0;
+                    while (from <= names.size())
+                    {
+                        size_t plus = names.find('+', from);
+                        k.keys.push_back(names.substr(from, plus == std::string::npos ? std::string::npos : plus - from));
+                        if (plus == std::string::npos)
+                        {
+                            break;
+                        }
+                        from = plus + 1;
+                    }
+                    k.hold = c2 == std::string::npos ? 0.15 : atof(item.c_str() + c2 + 1);
+                    g_options.keys.push_back(k);
+                }
+                if (comma == std::string::npos)
+                {
+                    break;
+                }
+                start = comma + 1;
+            }
         }
         else if (a == "--press")
         {
