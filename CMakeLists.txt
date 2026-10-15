@@ -49,4 +49,13 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
         MACOSX_BUNDLE_ICON_FILE AppIcon)
 
+    # The release: the app made standalone (its libraries in Contents/Frameworks, their licences, signed for this Mac) and
+    # zipped: build/dist/Crash Tag Team Racing.app and Crash-Tag-Team-Racing-macOS.zip. `cmake --build build --target release`
+    add_custom_target(release
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_app.py --app $<TARGET_BUNDLE_DIR:crash-cttr>
+                --name "Crash Tag Team Racing" --zip
+        DEPENDS crash-cttr
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Making the standalone app (build/dist)"
+        VERBATIM)
 endif()
