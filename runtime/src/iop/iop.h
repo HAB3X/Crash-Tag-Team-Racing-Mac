@@ -28,6 +28,10 @@ void IopServe(RpcCall& call);
 void McServ(RpcCall& call);
 // The pad server (padman.cpp)
 void PadMan(RpcCall& call);
+// A port's DualShock 2 as it answers a read in its pressure mode (0x79), after the answer's first three bytes: the buttons
+// (active low), the sticks (right x, right y, left x, left y), the pressures of right, left, up, down, triangle, circle, cross,
+// square, L1, R1, L2, R2. From the runtime's input (PadSetInput)
+void PadDualShock2Report(u32 port, u8 report[18]);
 const char* IopServerName(u32 sid);
 void SifReplyTaken();
 }
