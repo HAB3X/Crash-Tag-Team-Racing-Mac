@@ -48,6 +48,11 @@ add_library(ps2runtime STATIC
     runtime/src/memory.cpp
     runtime/src/render.cpp
     runtime/src/mmi.c
+    runtime/src/ipu/bitstream.cpp
+    runtime/src/ipu/colour.cpp
+    runtime/src/ipu/ipu.cpp
+    runtime/src/ipu/mpeg.cpp
+    runtime/src/ipu/vlc.cpp
     runtime/src/iop/sif.cpp
     runtime/src/iop/mcserv.cpp
     runtime/src/iop/padman.cpp
@@ -69,6 +74,16 @@ set_source_files_properties(runtime/src/ui/overlay.cpp PROPERTIES
 target_include_directories(ps2runtime PUBLIC runtime/include PRIVATE runtime/src)
 target_link_libraries(ps2runtime PUBLIC ps2hw SDL3::SDL3)
 target_compile_options(ps2runtime PRIVATE -O2 -g -Wall -Wno-unused-function)
+
+# The IPU's test on a real movie (runtime/tests/ipu/main.cpp): built when asked, `ninja ps2_ipu_movie`
+add_executable(ps2_ipu_movie EXCLUDE_FROM_ALL
+    runtime/tests/ipu/ee.cpp
+    runtime/tests/ipu/main.cpp
+    runtime/tests/ipu/player.cpp
+    runtime/tests/ipu/sfd.cpp
+)
+target_link_libraries(ps2_ipu_movie PRIVATE ps2runtime)
+target_compile_options(ps2_ipu_movie PRIVATE -O2 -g -Wall)
 
 # ps2_recompile(TARGET CONFIG file.toml DISC image EXECUTABLE name [FILES n])
 #
