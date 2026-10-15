@@ -25,8 +25,6 @@ public:
     virtual s32 SendReceive(u32 command, const u8* data, u32 size, std::vector<u8>& reply) = 0;
     // SendData (function 5, and SendData2's and SendData3's): data sent; its length, which the driver may rewrite
     virtual s32 Send(u32 command, const u8* data, u32& size) = 0;
-    // Each vertical blank (a driver's own thread waits for them on the console)
-    virtual void Vblank() {}
 };
 
 // A driver registered (dbcman's export 4): its device's type (1 a pad, 2 a memory card) and the second word of its

@@ -45,7 +45,8 @@ public:
 
     s32 Send(u32 command, const u8* data, u32& size) override { return Command(command, data, size, nullptr); }
 
-    void Vblank() override
+    // The driver's thread, once a vertical blank (0x0160: WaitVblankStart, the pad read, the frame sent)
+    void Vblank()
     {
         u8 frame[128] = {};
         frame[0] = StateRead;
@@ -160,5 +161,6 @@ void Ds2ModuleLoaded()
     // The device's description (ds2o's 0x1A20): type 1, its second word 0
     pad.device = DbcRegister(1, 0, &pad);
     DbcConnect(pad.device, 0, 0, "");
+    IopOnVblank([] { pad.Vblank(); });
 }
 }

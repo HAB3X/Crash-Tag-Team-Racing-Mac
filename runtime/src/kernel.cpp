@@ -395,7 +395,6 @@ bool TakeVblankEdge(std::unique_lock<std::mutex>& lock, bool& hold)
         lock.unlock();
         hold = GsVblank(newest, gameThread) || hold;
         PadVblank();
-        DbcVblank();
         IopVblank();
         if (g_game != nullptr && g_game->vblank != nullptr)
         {

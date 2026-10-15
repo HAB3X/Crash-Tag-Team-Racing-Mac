@@ -422,16 +422,4 @@ void DbcModuleLoaded(const std::string& name, const u8* elf, size_t size)
         Mc2ModuleLoaded(elf, size);
     }
 }
-
-void DbcVblank()
-{
-    std::lock_guard<std::recursive_mutex> lock(g_lock);
-    for (Device& d : g_devices)
-    {
-        if (d.driver != nullptr && d.connected)
-        {
-            d.driver->Vblank();
-        }
-    }
-}
 }
