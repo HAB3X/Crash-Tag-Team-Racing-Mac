@@ -210,6 +210,8 @@ struct Target
     // A colour target's float buffer of wrapping sums not yet added to it (resolve), its framebuffers by depth-stencil buffer
     GLuint accum = 0;
     bool accumPending = false;
+    // The alpha bit the pending sums' batches write where they draw (their alpha count says where): -1 none of them writes it
+    s32 accumAlpha = -1;
     // A colour target's alpha changes (a batch that can write it, an upload): a stencil made from it is good while it's the same
     u64 alphaVersion = 0;
     // A depth-stencil buffer's stencil: the destination alpha test it holds (its colour target, DATM, that one's alpha version
@@ -553,7 +555,7 @@ void main()
         // 255ths, as large parts, the sums of the many layers of a shadow volume pass rounded off by a unit or two)
         part = mod(part, 256.0);
         part = mix(part, part - 256.0, greaterThanEqual(part, vec3(128.0)));
-        outColour = vec4(part / 256.0, 0.0);
+        outColour = vec4(part / 256.0, 1.0);
         outFactor = vec4(0.0);
 #if DEPTH
         gl_FragDepth = depth;
@@ -713,12 +715,16 @@ void main()
 constexpr const char* ResolveFragmentSource = R"(#version 330 core
 uniform sampler2D before;
 uniform sampler2D sum;
+// The alpha written where the sums' batches drew (their count), as a 16 bit frame's target stores its bit
+uniform float alphaBit;
 out vec4 colour;
 void main()
 {
     ivec2 at = ivec2(gl_FragCoord.xy);
-    vec3 c = floor(texelFetch(before, at, 0).rgb * 255.0 + 0.5) + floor(texelFetch(sum, at, 0).rgb * 256.0 + 0.5);
-    colour = vec4(mod(c, 256.0) / 255.0, 0.0);
+    vec4 b = texelFetch(before, at, 0);
+    vec4 s = texelFetch(sum, at, 0);
+    vec3 c = floor(b.rgb * 255.0 + 0.5) + floor(s.rgb * 256.0 + 0.5);
+    colour = vec4(mod(c, 256.0) / 255.0, s.a > 0.0 ? alphaBit : b.a);
 }
 )";
 
@@ -4042,6 +4048,8 @@ void HwGs::Resolve(Target* target)
     }
 
     target->accumPending = false;
+    const s32 alpha = target->accumAlpha;
+    target->accumAlpha = -1;
     Gl& gl = GetGl();
     GLuint before = CopyTarget(target);
     const GLsizei w = static_cast<GLsizei>(target->width * target->scale);
@@ -4053,8 +4061,9 @@ void HwGs::Resolve(Target* target)
     gl.Disable(GL_DEPTH_TEST);
     gl.Disable(GL_STENCIL_TEST);
     gl.Disable(GL_BLEND);
-    gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+    gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, alpha >= 0 ? GL_TRUE : GL_FALSE);
     gl.UseProgram(resolveProgram_);
+    gl.Uniform1f(gl.GetUniformLocation(resolveProgram_, "alphaBit"), alpha > 0 ? 128.0f / 255.0f : 0.0f);
     gl.ActiveTexture(GL_TEXTURE0);
     gl.BindTexture(GL_TEXTURE_2D, before);
     gl.ActiveTexture(GL_TEXTURE0 + 1);
@@ -4065,6 +4074,10 @@ void HwGs::Resolve(Target* target)
     gl.BindVertexArray(emptyArray_);
     gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    if (alpha >= 0)
+    {
+        target->alphaVersion++;
+    }
 }
 
 GLuint HwGs::CopyOf(Target* target)
@@ -4263,16 +4276,37 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
     }
 
     // A wrapping additive blend into a 16 bit frame (the shadow volumes' counting: COLCLAMP off, D the destination, A, B and C
-    // the source's or FIX, the alpha not written): summed in a float buffer, wrapped when it's resolved (its order doesn't
-    // matter, so the batch needn't break where its primitives overlap)
+    // the source's or FIX): summed in a float buffer, wrapped when it's resolved (its order doesn't matter, so the batch needn't
+    // break where its primitives overlap). The alpha bit not written, or written the same everywhere the primitive draws: FBA's,
+    // or the vertexes' alpha (no texture's) all on one side of 0x80, with no alpha test to fail (CTTR's shadow volumes write
+    // alpha 0); the resolve sets it where the sums' batches drew
     bool wrapAdd = false;
+    s32 wrapAlpha = -1;
+    if (channelMasks[3] == 0 && (!state.alphaTest || state.atst == Gs::AtstAlways))
+    {
+        if (state.fba)
+        {
+            wrapAlpha = 1;
+        }
+        else if (!state.textured || !state.tcc)
+        {
+            u32 high = 0;
+            for (u32 i = 0; i < count; i++)
+            {
+                high += vertexes[i].a >= 0x80 ? 1 : 0;
+            }
+
+            wrapAlpha = high == 0 ? 0 : high == count ? 1 : -1;
+        }
+    }
+
     static const bool noWrapAdd = std::getenv("TWIN_HW_NO_WRAPADD") != nullptr;
     if (!noWrapAdd && state.blend && !state.colclamp && !state.pabe && frame16 && state.blendD == 1 && state.blendA != 1 && state.blendB != 1 &&
-        state.blendC != 1 && channelMasks[0] == 0 && channelMasks[1] == 0 && channelMasks[2] == 0 && channelMasks[3] == 0x80 &&
-        !shaderBlend)
+        state.blendC != 1 && channelMasks[0] == 0 && channelMasks[1] == 0 && channelMasks[2] == 0 &&
+        (channelMasks[3] == 0x80 || wrapAlpha >= 0) && !shaderBlend)
     {
         wrapAdd = true;
-        key.wrapAdd = 1;
+        key.wrapAdd = channelMasks[3] == 0x80 ? 1 : 2 + static_cast<u32>(wrapAlpha);
         key.gsBlend[0] = state.blendA;
         key.gsBlend[1] = state.blendB;
         key.gsBlend[2] = state.blendC;
@@ -5215,6 +5249,12 @@ void HwGs::Flush()
         depthCopy = copy.first;
     }
 
+    if (k.wrapAdd >= 2 && k.colour->accumAlpha >= 0 && k.colour->accumAlpha != static_cast<s32>(k.wrapAdd - 2))
+    {
+        // Sums writing the other alpha bit: the last one written is what shows, so those before are added first
+        Resolve(k.colour);
+    }
+
     if (k.wrapAdd)
     {
         // Into the target's float buffer of sums (cleared when a run of them starts)
@@ -5227,6 +5267,11 @@ void HwGs::Flush()
             gl.ClearColor(0.0f, 0.0f, 0.0f, 0.0f);
             gl.Clear(GL_COLOR_BUFFER_BIT);
             k.colour->accumPending = true;
+        }
+
+        if (k.wrapAdd >= 2)
+        {
+            k.colour->accumAlpha = static_cast<s32>(k.wrapAdd - 2);
         }
     }
     else
@@ -5296,7 +5341,8 @@ void HwGs::Flush()
     {
         gl.Enable(GL_BLEND);
         gl.BlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-        gl.BlendFuncSeparate(GL_ONE, GL_ONE, GL_ZERO, GL_ONE);
+        // The alpha counts the batch's pixels (written only where the alpha bit is: the colour mask)
+        gl.BlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE);
     }
     else if (k.blend)
     {

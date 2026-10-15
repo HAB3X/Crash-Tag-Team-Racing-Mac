@@ -55,5 +55,9 @@ here unchanged except for:
 - `ee/vu.*`, `ee/vu1translate.cpp`, `recomp/vutranslate.py`: VU1's FSSET translated, and FSAND of the sticky status bits
   where the translation's are the interpreter's (`startStatus` carries FSSET's bits, `anyEntry` is an entry since the
   start or FSSET; the dispatcher doesn't enter with FSSET in flight)
+- `hw/hwgs.cpp`: a wrapping additive blend into a 16 bit frame that writes the alpha bit the same everywhere it draws (FBA's, or
+  untextured vertexes' alpha all on one side of 0x80, no alpha test) summed like one that doesn't write it, the resolve setting
+  the bit where the sums' batches drew (their count in the sums' alpha). CTTR's shadow volumes write alpha 0: each of their
+  ~400 batches a frame was a copy of the target and two render passes; the park went from 13 frames a second to 24
 
 Fixes made in either place should be copied to the other.
