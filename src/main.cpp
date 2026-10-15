@@ -5,6 +5,8 @@ void CttrRegisterRadIop();
 void CttrRegisterAudio();
 void CttrPcText();
 void CttrControlsVblank();
+void CttrTypingVblank();
+int CttrTyping();
 int CttrMode();
 int CttrMenu();
 const Ps2GameControl* CttrControls();
@@ -26,17 +28,22 @@ static void CttrInit()
 }
 
 // At each vertical blank, on the game's side
-static void CttrVblank() { CttrControlsVblank(); }
+static void CttrVblank()
+{
+    CttrControlsVblank();
+    CttrTypingVblank();
+}
 
 int main(int argc, char** argv)
 {
-    // The PC controls in three modes, the menus, on foot and driving (src/controls.cpp). The PC menus are the runtime's own:
-    // Escape opens them (and a gamepad's Back, unless it's set to be Select), and Return is the game's Start, its pause
+    // The PC controls in three modes, the menus, on foot and driving (src/controls.cpp), and names typed (src/typing.cpp). The
+    // PC menus are the runtime's own: Escape opens them (and a gamepad's Back, unless it's set to be Select), and Return is the
+    // game's Start, its pause
     static const Ps2GameInfo game = {"Crash Tag Team Racing (USA)",
                                      "SLUS_211.91",
                                      4928124,
                                      CttrInit,
-                                     nullptr,
+                                     CttrTyping,
                                      CttrVblank,
                                      CttrMenu,
                                      nullptr,

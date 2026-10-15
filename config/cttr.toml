@@ -12,6 +12,7 @@ longjmp = ["0x4f2e90"]
 # address = "host function": replaced by the runtime or by src/
 "0x3b4eb0" = "CttrFiberStart"      # a fiber's first run on its own stack (src/fibers.cpp)
 "0x196560" = "CttrControllerValue" # Controller::GetValue: which controls the game reads, its mode (src/controls.cpp)
+"0x20f458" = "CttrNameScreenUpdate"  # Name Selection's update: typed names put in (src/typing.cpp)
 "0x370508" = "CttrReadLanguage"    # a text bible's language read, its lines about the PS2 said as a computer's (src/pctext.cpp)
 
 [vu1]
