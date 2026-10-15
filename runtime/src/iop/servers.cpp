@@ -146,8 +146,15 @@ std::string ModuleName(const u8* elf, size_t size)
     return "";
 }
 
-// LIBSD.IRX's name for itself: its reverb presets are libsd's (sound/libsd.cpp)
-const char* const LibsdName = "Sound_Device_Library";
+// A module's image seen as it loads (its file, or its copy in the IOP's memory), for the stand-ins that take something from it:
+// LIBSD.IRX's reverb presets are libsd's (sound/libsd.cpp)
+void ModuleImageLoaded(const std::string& name, const u8* elf, size_t size)
+{
+    if (name == "Sound_Device_Library")
+    {
+        SdModuleLoaded(elf, size);
+    }
+}
 
 // A module loaded: its ID, and the game's own module of that name started with the arguments (arg_len bytes, each ending
 // with a zero)
@@ -206,10 +213,7 @@ void LoadFile(RpcCall& c)
             std::vector<u8> elf((size + 2047) / 2048 * 2048);
             DiscReadSectors(lsn, static_cast<u32>(elf.size() / 2048), elf.data());
             name = ModuleName(elf.data(), size);
-            if (name == LibsdName)
-            {
-                SdModuleLoaded(elf.data(), size);
-            }
+            ModuleImageLoaded(name, elf.data(), size);
         }
         else
         {
@@ -226,10 +230,7 @@ void LoadFile(RpcCall& c)
     {
         u32 at = c.In32(0) & (IopRamSize - 1);
         std::string name = ModuleName(IopMem() + at, IopRamSize - at);
-        if (name == LibsdName)
-        {
-            SdModuleLoaded(IopMem() + at, IopRamSize - at);
-        }
+        ModuleImageLoaded(name, IopMem() + at, IopRamSize - at);
         c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(4))));
         c.Out32(4, 0);
         return;
