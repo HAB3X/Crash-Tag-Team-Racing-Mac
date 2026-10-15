@@ -349,5 +349,10 @@ void PadVblank();
 // A port's buttons (PS2 bits, 1 = pressed: select, L3, R3, start, up, right, down, left, L2, R2, L1, R1, triangle, circle,
 // cross, square) and sticks (right x, right y, left x, left y; 0x80 is the centre)
 void PadSetInput(u32 port, u32 pressed, const u8 sticks[4]);
+
+// --- iop/servers.cpp
+// The IOP modules' vertical blank handlers (IopOnVblank), as each blank begins on the game's side
+void IopVblank();
+
 constexpr u32 IopRamSize = 2 * 1024 * 1024;
 }
