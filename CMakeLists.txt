@@ -34,7 +34,7 @@ if(APPLE)
         OUTPUT ${ICON}
         COMMAND /usr/bin/env python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_icon.py ${CTTR_DISC}
                 --icon COMMON/COMMON.RCF:art/memcard/crash.ico --yaw 20 --pitch 15 --light --smooth
-                --out ${CMAKE_CURRENT_BINARY_DIR}/icon
+                --out ${CMAKE_CURRENT_BINARY_DIR}/icon --runtime-tools ${PS2_RUNTIME_DIR}/tools
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_icon.py
         COMMENT "Making the app's icon from the disc"
         VERBATIM)

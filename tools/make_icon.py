@@ -230,7 +230,10 @@ def main():
     parser.add_argument("--pitch", type=float, default=0)
     parser.add_argument("--light", action="store_true", help="shade the model by a light (for flat vertex colours)")
     parser.add_argument("--smooth", action="store_true", help="blend the texture's texels (for a texture of one picture)")
+    parser.add_argument("--runtime-tools", help="the runtime's tools folder (the build passes it; else looked for next to this repository)")
     args = parser.parse_args()
+    if args.runtime_tools:
+        RUNTIME_TOOLS.insert(0, Path(args.runtime_tools))
     positions, normals, uvs, colours, texture = parse_icon(read_disc_file(args.disc, args.icon))
     size = 1024
     # Drawn at twice the size and brought down, for smooth edges
