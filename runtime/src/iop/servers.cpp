@@ -30,6 +30,8 @@ std::map<std::string, IopModuleStart>& GameModules()
     static std::map<std::string, IopModuleStart> m;
     return m;
 }
+// The modules' vertical blank handlers (IopOnVblank), in the order they were added
+std::vector<std::function<void()>> g_vblankHandlers;
 
 void Dump(const RpcCall& c)
 {
@@ -610,6 +612,16 @@ std::map<u32, Registered>& Registry()
 void IopRegisterServer(u32 sid, const char* name, RpcServer server) { Registry()[sid] = {name, std::move(server)}; }
 
 void IopRegisterModule(const char* name, IopModuleStart start) { GameModules()[name] = std::move(start); }
+
+void IopOnVblank(std::function<void()> handler) { g_vblankHandlers.push_back(std::move(handler)); }
+
+void IopVblank()
+{
+    for (const auto& handler : g_vblankHandlers)
+    {
+        handler();
+    }
+}
 
 u8* IopMemory(u32 address) { return IopMem() + (address & (IopRamSize - 1)); }
 
