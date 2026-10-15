@@ -257,10 +257,12 @@ class Program:
                 continue  # a delay slot: its branch decides
             if nxt >= e and self.in_text(nxt):
                 found.add(nxt)
-        # Code after the reached part that nothing reaches starts a function (padding skipped). Words that don't decode, in
-        # what would run from there, make it data kept in the text (Biohazard Outbreak's libkernel keeps its syscall
-        # patch tables between its functions): no function, and the search goes on past it
-        a = s
+        # Code after the reached part that nothing reaches starts a function (padding skipped). Only after it: an unreached
+        # word between reached ones is dead code the compiler left inside the function (Biohazard Outbreak File 1's demo
+        # overlay has one in the middle of a switch, at 0x540550), and a start there cut the function off from its later
+        # cases. Words that don't decode, in what would run from there, make it data kept in the text (Biohazard Outbreak's
+        # libkernel keeps its syscall patch tables between its functions): no function, and the search goes on past it
+        a = max(seen) + 4 if seen else s
         skipped = set()
         while a < e:
             if a not in seen and a not in skipped and self.words[(a - self.text_start) // 4] != 0:

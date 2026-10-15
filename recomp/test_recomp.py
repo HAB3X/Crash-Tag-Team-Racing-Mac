@@ -77,6 +77,15 @@ class PaddedOverlayTest(unittest.TestCase):
         self.assertEqual([s for s, _ in functions], [0x500080])
 
 
+class DeadCodeTest(unittest.TestCase):
+    def test_dead_word_inside_a_function_doesnt_split_it(self):
+        # f branches over a dead instruction to code of its own after it: one function, not two
+        beq_over = 0x10000002  # beq zero, zero, +2 (to 0x500050)
+        code = overlay(words(beq_over, NOP, addiu(4, 0, 9), addiu(2, 0, 1), JR_RA, NOP))
+        functions = Program(code, {}).analyse()
+        self.assertEqual([s for s, _ in functions], [0x500040])
+
+
 class CheckWordsTest(unittest.TestCase):
     def test_words_tell_overlays_apart(self):
         a = overlay(words(addiu(2, 0, 1), JR_RA, NOP, NOP))
