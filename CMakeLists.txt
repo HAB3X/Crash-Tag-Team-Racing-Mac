@@ -48,6 +48,9 @@ add_library(ps2runtime STATIC
     runtime/src/memory.cpp
     runtime/src/render.cpp
     runtime/src/mmi.c
+    runtime/src/iop/dbcman.cpp
+    runtime/src/iop/ds2.cpp
+    runtime/src/iop/mc2.cpp
     runtime/src/iop/sif.cpp
     runtime/src/iop/mcserv.cpp
     runtime/src/iop/padman.cpp

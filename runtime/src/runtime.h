@@ -346,6 +346,8 @@ void SdModuleLoaded(const u8* elf, size_t size);
 // --- iop/padman.cpp
 // The pads' frames, rewritten at each vertical blank (the IOP's PADMAN does it then)
 void PadVblank();
+// --- iop/dbcman.cpp: the Dbc_Manager's drivers' work at each vertical blank (the DualShock 2's frames)
+void DbcVblank();
 // A port's buttons (PS2 bits, 1 = pressed: select, L3, R3, start, up, right, down, left, L2, R2, L1, R1, triangle, circle,
 // cross, square) and sticks (right x, right y, left x, left y; 0x80 is the centre)
 void PadSetInput(u32 port, u32 pressed, const u8 sticks[4]);

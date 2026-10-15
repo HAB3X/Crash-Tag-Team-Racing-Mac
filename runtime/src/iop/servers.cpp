@@ -1,5 +1,6 @@
 // The RPC servers of the IOP modules, high level: the module loader, the IOP heap, the file I/O manager (on the disc image),
-// the CD/DVD driver, the memory card (mcserv.cpp), the pads (padman.cpp), and stand-ins answering zeros for the rest. Every call to a server or function not done here is logged
+// the CD/DVD driver, the memory card (mcserv.cpp), the pads (padman.cpp), the Dbc_Manager (dbcman.cpp), and stand-ins answering
+// zeros for the rest. Every call to a server or function not done here is logged
 // once with its arguments: that log is the list of what's left.
 #include "iop.h"
 #include "ps2/sound.h"
@@ -147,13 +148,14 @@ std::string ModuleName(const u8* elf, size_t size)
 }
 
 // A module's image seen as it loads (its file, or its copy in the IOP's memory), for the stand-ins that take something from it:
-// LIBSD.IRX's reverb presets are libsd's (sound/libsd.cpp)
+// LIBSD.IRX's reverb presets are libsd's (sound/libsd.cpp), the Dbc_Manager's drivers start (dbcman.cpp)
 void ModuleImageLoaded(const std::string& name, const u8* elf, size_t size)
 {
     if (name == "Sound_Device_Library")
     {
         SdModuleLoaded(elf, size);
     }
+    DbcModuleLoaded(name, elf, size);
 }
 
 // A module loaded: its ID, and the game's own module of that name started with the arguments (arg_len bytes, each ending
@@ -594,6 +596,9 @@ const ServerName g_names[] = {
     {0x8000059A, "cdvd disk ready"},
     {0x8000059C, "cdvd disk ready"},
     {0x80000701, "sdrdrv"},
+    {0x80001300, "dbcman"},
+    {0x8000131B, "dbcman send_data2"},
+    {0x8000131C, "dbcman send_data3"},
 };
 }
 
@@ -700,6 +705,11 @@ void IopServe(RpcCall& c)
         break;
     case 0x80000701:
         Sdr(c);
+        break;
+    case 0x80001300:
+    case 0x8000131B:
+    case 0x8000131C:
+        DbcServe(c);
         break;
     default:
         Unhandled(c);
