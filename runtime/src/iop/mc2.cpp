@@ -1,5 +1,6 @@
-// The memory card driver of the Dbc_Manager (mc2_s1 3020, "PsIImc2_s1  3020", File 2's MODULES/DRIVE.DAT), high level: the
-// card in the first slot. Addresses below are the module's (its text from 0).
+// The memory card driver of the Dbc_Manager (mc2_s1: "PsIImc2_s1  3020" in File 2's MODULES/DRIVE.DAT, "PsIImc2_s1  2811" in
+// File 1's), high level: the card in the first slot. Addresses below are 3020's (its text from 0); 2811's differences are at the
+// end of this note.
 //
 // mc2_s1 is a page device: the file system (directories, files, the FAT, formatting) is libmc2's on the EE, which sends the
 // driver page reads, page writes and block erases. So the card is the card's pages: an image in --memcards, port0.ps2, 16384
@@ -20,6 +21,18 @@
 // spare area, 9 a block erased, 10 the clock (sceCdReadClock's 8 bytes), 11 the same page written to pages (the block erased at
 // each block's first page), 12 the card probed, 13 the card no longer counts as changed. It counts as changed from the driver's
 // start until 13 (every other command but 4 answers 2 meanwhile, its status otherwise unchanged).
+//
+// 2811 (File 1's, with libmc2 2811) has commands 1-12, the same but for:
+//  - 4 (0x2914) finishes a pending write (as 6), then answers 2 and no longer counts the card as changed if it did, else 1;
+//    there's no 13, and every command but 4 answers 2 while the card counts as changed
+//  - 5 (0x2CE4) checks the second backup block's first page's ECC (0 when it's wrong); the write is pending (2, its block the
+//    first page's word) while the second page is erased; otherwise the answer is 1 when the second page's ECC is right and its
+//    word is the first's, else 0. Nothing is erased
+//  - 6 (0x2F30) answers 1 at once when the second backup block's first word is FFFFFFFF, else finishes as 3020's does
+//  - 2 (0x2294) finishes a pending write once before the first block (0 fails it); a block goes through the backups when
+//    it's neither backup block (even with no second backup block): the second backup block erased unless its first word is
+//    FFFFFFFF, the block copied to the first, its number written into the second's first page only and read back (its ECC
+//    checked)
 #include "dbcman.h"
 
 #include <algorithm>
@@ -133,6 +146,7 @@ class Card final : public DbcDriver
 {
 public:
     int device = -1;
+    bool v2811 = false; // File 1's mc2_s1 (above)
 
     s32 Receive(u32 command, std::vector<u8>&) override
     {
@@ -172,7 +186,7 @@ private:
 
     s32 Command(u32 command)
     {
-        if (changed_ && command != Check && command != Unchange)
+        if (changed_ && command != Check && (v2811 || command != Unchange))
         {
             SetResult(2);
             return SendStatus();
@@ -194,7 +208,7 @@ private:
         case Finish:
         case Fill:
             CheckGeometry(command);
-            if (Req(16) < Req(0) + Req(4) || (Req(20) + 1) * BlockPages > Req(16) || (Req(24) + 1) * BlockPages > Req(16))
+            if (static_cast<s32>(Req(16)) < static_cast<s32>(Req(0) + Req(4)) || PastCard(Req(20)) || PastCard(Req(24)))
             {
                 SetResult(0);
                 return SendStatus();
@@ -223,12 +237,21 @@ private:
             break;
         }
         case Check:
+            if (v2811)
+            {
+                // The pending write's result is overwritten by the card's
+                CheckGeometry(command);
+                FinishPending();
+                SetResult(changed_ ? 2 : 1);
+                changed_ = false;
+                break;
+            }
             SetResult(changed_ ? 2 : 1);
             break;
         case Pending:
         {
             s32 block;
-            SetResult(PendingBlock(block));
+            SetResult(v2811 ? PendingBlock2811(block) : PendingBlock(block));
             SetData(0, &block, 4);
             break;
         }
@@ -251,8 +274,12 @@ private:
             // The card answers the probe with the termination code the driver gave it when it found the card: present
             break;
         case Unchange:
-            changed_ = false;
-            break;
+            if (!v2811)
+            {
+                changed_ = false;
+                break;
+            }
+            [[fallthrough]];
         default:
             if (Once("mc2 command " + std::to_string(command)))
             {
@@ -278,6 +305,19 @@ private:
             Fatal("mc2: command %u for a card of %u byte pages, %u to a block, %u pages; this card's are %u, %u, %u", command,
                   Req(8), Req(12), Req(16), PageBytes, BlockPages, CardPages);
         }
+    }
+
+    // A block's end past the card's last page, as the driver compares them (32 bit, signed)
+    bool PastCard(u32 block) const
+    {
+        return static_cast<s32>(Req(16)) < static_cast<s32>((block + 1) * BlockPages);
+    }
+
+    s32 Word(const u8* page) const
+    {
+        s32 v;
+        std::memcpy(&v, page, 4);
+        return v;
     }
 
     // 1: pages read, their ECC checked, sent from the first buffer's offset 128; 8: one page with its spare area at 128. The
@@ -318,11 +358,40 @@ private:
         u32 end = Req(0) + Req(4);
         u32 backup1 = Req(20), backup2 = Req(24);
         const u8* data = req_ + 40;
+        if (v2811)
+        {
+            s32 finished = FinishPending();
+            SetResult(finished);
+            if (finished == 0)
+            {
+                return;
+            }
+        }
         do
         {
             u32 block = page - page % BlockPages;
-            bool viaBackup = block != backup1 * BlockPages && block != backup2 * BlockPages && backup2 != 0;
-            if (viaBackup)
+            bool viaBackup = block != backup1 * BlockPages && block != backup2 * BlockPages && (v2811 || backup2 != 0);
+            if (viaBackup && v2811)
+            {
+                ReadPage(backup2 * BlockPages, buffer_.data());
+                if (Word(buffer_.data()) != -1)
+                {
+                    EraseBlock(backup2 * BlockPages);
+                }
+                if (CopyBlock(static_cast<s32>(backup1), static_cast<s32>(block / BlockPages)) == 0)
+                {
+                    SetResult(0);
+                    return;
+                }
+                WriteMarker(backup2 * BlockPages, block / BlockPages);
+                ReadPage(backup2 * BlockPages, buffer_.data());
+                if (!CheckEcc(buffer_.data(), PageBytes, eccSize_))
+                {
+                    SetResult(0);
+                    return;
+                }
+            }
+            else if (viaBackup)
             {
                 s32 finished = FinishPending();
                 SetResult(finished);
@@ -385,7 +454,7 @@ private:
         {
             return 1;
         }
-        if ((static_cast<s64>(first) + 1) * BlockPages > Req(16))
+        if (PastCard(static_cast<u32>(first)))
         {
             return 0;
         }
@@ -401,16 +470,57 @@ private:
         return 1;
     }
 
-    // 6 (0x2F24): a pending write finished, the block copied back from the first backup block
+    // 2811's 5 (0x2CE4)
+    s32 PendingBlock2811(s32& block)
+    {
+        block = -1;
+        u32 backup2 = Req(24) * BlockPages;
+        ReadPage(backup2, buffer_.data());
+        if (!CheckEcc(buffer_.data(), PageBytes, eccSize_))
+        {
+            return 0;
+        }
+        s32 first = Word(buffer_.data());
+        if (PastCard(static_cast<u32>(first)))
+        {
+            return 0;
+        }
+        ReadPage(backup2 + 1, buffer_.data());
+        // The driver looks for a byte that isn't FF, and checks the page's ECC at each (the check rewrites the ECC it keeps)
+        for (u32 i = 0; i < rawSize_; i++)
+        {
+            if (buffer_[i] != 0xFF && CheckEcc(buffer_.data(), PageBytes, eccSize_))
+            {
+                return Word(buffer_.data()) == first ? 1 : 0;
+            }
+        }
+        block = first;
+        return 2;
+    }
+
+    // 6 (3020's 0x2F24, 2811's 0x2F30): a pending write finished, the block copied back from the first backup block
     s32 FinishPending()
     {
         s32 block;
-        s32 pending = PendingBlock(block);
+        s32 pending;
+        if (v2811)
+        {
+            ReadPage(Req(24) * BlockPages, buffer_.data());
+            if (Word(buffer_.data()) == -1)
+            {
+                return 1;
+            }
+            pending = PendingBlock2811(block);
+        }
+        else
+        {
+            pending = PendingBlock(block);
+        }
         if (pending != 2)
         {
             return pending;
         }
-        if ((static_cast<s64>(block) + 1) * BlockPages > Req(16) || block < 0 ||
+        if (PastCard(static_cast<u32>(block)) || block < 0 ||
             CopyBlock(block, static_cast<s32>(Req(20))) == 0)
         {
             return 0;
@@ -422,8 +532,7 @@ private:
     // 0x2F88: a block erased and the other's pages written into it (0 for blocks past the card)
     s32 CopyBlock(s32 to, s32 from)
     {
-        if ((static_cast<s64>(to) + 1) * BlockPages > Req(16) || to < 0 ||
-            (static_cast<s64>(from) + 1) * BlockPages > Req(16) || from < 0)
+        if (PastCard(static_cast<u32>(to)) || to < 0 || PastCard(static_cast<u32>(from)) || from < 0)
         {
             return 0;
         }
@@ -569,10 +678,12 @@ private:
 
 void Mc2ModuleLoaded(const u8* elf, size_t size)
 {
-    static const char version[] = "PsIImc2_s1  3020";
-    if (std::search(elf, elf + size, version, version + sizeof(version) - 1) == elf + size)
+    static const char id[] = "PsIImc2_s1  ";
+    const u8* at = std::search(elf, elf + size, id, id + sizeof(id) - 1);
+    std::string version = at + sizeof(id) - 1 + 4 <= elf + size ? std::string(at + sizeof(id) - 1, at + sizeof(id) + 3) : "";
+    if (version != "3020" && version != "2811")
     {
-        Log("mc2: this mc2_s1 isn't 3020, the one whose card protocol is done (File 2's): no card in slot 1");
+        Log("mc2: mc2_s1 \"%s\": only 3020's and 2811's card protocols are done: no card in slot 1", version.c_str());
         return;
     }
     static Card card;
@@ -581,7 +692,9 @@ void Mc2ModuleLoaded(const u8* elf, size_t size)
         Log("mc2: a second mc2_s1 loaded: slot 1 already has its card");
         return;
     }
-    // The device's description (0x1BC0): type 2, its second word 0
+    // The device's description (3020's 0x1BC0): type 2, its second word 0
+    card.v2811 = version == "2811";
+    Log("mc2: mc2_s1 %s", version.c_str());
     card.device = DbcRegister(2, 0, &card);
     DbcConnect(card.device, CardPort, 0, "");
 }
