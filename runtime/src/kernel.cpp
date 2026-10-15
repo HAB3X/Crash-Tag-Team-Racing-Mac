@@ -857,6 +857,18 @@ void SysWakeupThread(std::unique_lock<std::mutex>& lock, Ps2Cpu* c, bool fromInt
     }
 }
 
+// The EE kernel's thread status: a suspended thread reads as THS_SUSPEND (8), or THS_WAITSUSPEND (0xC) while it also waits;
+// READY and RUN are not kept beside the suspend bit
+u32 ThreadStatus(const Thread* t)
+{
+    u32 status = t->state == State::Running ? 1 : t->state == State::Ready ? 2 : t->state == State::Waiting ? 4 : 16;
+    if (t->suspended && status != 16)
+    {
+        status = status == 4 ? 0xC : 8;
+    }
+    return status;
+}
+
 void SysReferThreadStatus(Ps2Cpu* c)
 {
     Thread* t = FindThread(static_cast<s32>(Arg(c, 0)));
@@ -866,20 +878,15 @@ void SysReferThreadStatus(Ps2Cpu* c)
         Ret(c, KE_UNKNOWN_THID);
         return;
     }
+    u32 status = ThreadStatus(t);
     if (p != 0)
     {
-        u32 status = t->state == State::Running ? 1 : t->state == State::Ready ? 2 : t->state == State::Waiting ? 4 : 16;
-        if (t->suspended)
-        {
-            status |= 8;
-        }
         u32 words[12] = {status, t->entry, t->stack, t->stackSize, t->gp, static_cast<u32>(t->initPriority),
                          static_cast<u32>(t->priority), t->attr, t->option,
                          t->wait == WaitKind::Sleep ? 1u : t->wait == WaitKind::Sema ? 2u : 0u,
                          static_cast<u32>(t->waitSema), static_cast<u32>(t->wakeups)};
         std::memcpy(Host(p), words, sizeof(words));
     }
-    u32 status = t->state == State::Running ? 1 : t->state == State::Ready ? 2 : t->state == State::Waiting ? 4 : 16;
     Ret(c, status);
 }
 
