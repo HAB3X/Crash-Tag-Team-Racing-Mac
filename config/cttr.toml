@@ -34,3 +34,8 @@ programs = [
     ["0x50bf10", "0x50c4a8", "0x4cc"],
     ["0x50c4b0", "0x50cc60", "0x4cc"],
 ]
+# Entries a JR reaches through a table in VU memory (the skinning loop at 0x40F jumps into its unrolled matrices): found by
+# PS2_VU1_PROFILE, where runs were interpreted from these offsets (about 80% of the race's interpreted instructions)
+entries = [
+    ["0x504fc0", ["0x418", "0x421", "0x42a"]],
+]
