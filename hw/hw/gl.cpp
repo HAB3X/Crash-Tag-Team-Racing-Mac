@@ -109,6 +109,8 @@ bool LoadGl()
     ok &= Load(g_Gl.FenceSync, "glFenceSync");
     ok &= Load(g_Gl.WaitSync, "glWaitSync");
     ok &= Load(g_Gl.DeleteSync, "glDeleteSync");
+    // (optional: a fallback does without it)
+    g_Gl.TextureBarrierNV = reinterpret_cast<void (*)()>(SDL_GL_GetProcAddress("glTextureBarrierNV"));
     g_Loaded = ok;
     return ok;
 }

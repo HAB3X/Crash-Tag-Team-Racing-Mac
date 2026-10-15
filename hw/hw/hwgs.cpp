@@ -3477,7 +3477,10 @@ void HwGs::BeforeCpuWriteRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 ri
         return;
     }
 
-    SyncMem(newer);
+    // Memory's copy takes the targets' newer pages now (the rectangle goes over them); the writes waiting for it on the other
+    // pages are merged with this one later, from local memory as it then is (each merge two passes: a texture uploaded a piece
+    // at a time over the same pages merged each piece before the next)
+    SyncMem(newer & newestMask_);
     // (the oldest records' rectangles forgotten past a few dozen: the reads they spare are of what was written last)
     if (partialWrites_.size() >= 64)
     {
@@ -3534,6 +3537,14 @@ void HwGs::MergeWrites(const Gs::PageSet& pages)
     // Local memory's pages (fresh) and memory's copy as it is (old), in two staging textures at the pages' own rows
     const u32 freshSlot = stagingNext_++ % StagingRing;
     const u32 oldSlot = stagingNext_++ % StagingRing;
+    // (through a fresh buffer's storage, as SyncMem uploads: written straight into the texture, the CPU waited for the GPU's
+    // reads of the slot from the merges before, about 0.4 ms each and 50 merges a frame in CTTR's races)
+    if (uploadBuffer_ == 0)
+    {
+        gl.GenBuffers(1, &uploadBuffer_);
+    }
+
+    gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER, uploadBuffer_);
     gl.BindTexture(GL_TEXTURE_2D, memStaging_[freshSlot]);
     gl.PixelStorei(GL_UNPACK_ALIGNMENT, 4);
     gl.PixelStorei(GL_UNPACK_ROW_LENGTH, 0);
@@ -3551,11 +3562,15 @@ void HwGs::MergeWrites(const Gs::PageSet& pages)
             end++;
         }
 
+        gl.BufferData(GL_PIXEL_UNPACK_BUFFER, static_cast<GLsizeiptr>(end - page + 1) * 8192, memory + static_cast<size_t>(page) * 8192,
+                      GL_STREAM_DRAW);
         gl.TexSubImage2D(GL_TEXTURE_2D, 0, 0, static_cast<GLint>(page * 2), 1024, static_cast<GLsizei>((end - page + 1) * 2),
-                         GL_RED_INTEGER, GL_UNSIGNED_INT, memory + static_cast<size_t>(page) * 8192);
+                         GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
         runs.emplace_back(page, end);
         page = end;
     }
+
+    gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
     // Each layout's rectangles in a pass of their own (8 at most a pass), from memory's copy as the pass before left it
     std::vector<bool> merged(partialWrites_.size(), false);
@@ -3584,12 +3599,18 @@ void HwGs::MergeWrites(const Gs::PageSet& pages)
             lowest = std::max(lowest, w.rect.bottom);
         }
 
-        gl.BindFramebuffer(GL_FRAMEBUFFER, stagingFbo_[oldSlot]);
-        Pass(stagingFbo_[oldSlot], "memory merge copy");
-        for (const auto& run : runs)
+        // The words the rectangles leave as they were: read from memory's copy itself after a texture barrier (each fragment
+        // its own word), else from a copy of it (a pass of its own)
+        const bool barrier = gl.TextureBarrierNV != nullptr;
+        if (!barrier)
         {
-            CopyRect(copyWordProgram_, memTexture_, 1024.0f, 1024.0f, 0, static_cast<s32>(run.first * 2), 1024,
-                     static_cast<s32>((run.second + 1) * 2));
+            gl.BindFramebuffer(GL_FRAMEBUFFER, stagingFbo_[oldSlot]);
+            Pass(stagingFbo_[oldSlot], "memory merge copy");
+            for (const auto& run : runs)
+            {
+                CopyRect(copyWordProgram_, memTexture_, 1024.0f, 1024.0f, 0, static_cast<s32>(run.first * 2), 1024,
+                         static_cast<s32>((run.second + 1) * 2));
+            }
         }
 
         u32 family = 0;
@@ -3599,7 +3620,7 @@ void HwGs::MergeWrites(const Gs::PageSet& pages)
         UseLayout(mergeWritesProgram_, lead.psm, lead.bp, lead.bw, static_cast<u32>(lowest) / info.pageHeight + 1);
         auto uniform = [&](const char* name) { return gl.GetUniformLocation(mergeWritesProgram_, name); };
         gl.ActiveTexture(GL_TEXTURE0 + 3);
-        gl.BindTexture(GL_TEXTURE_2D, memStaging_[oldSlot]);
+        gl.BindTexture(GL_TEXTURE_2D, barrier ? memTexture_ : memStaging_[oldSlot]);
         gl.ActiveTexture(GL_TEXTURE0 + 4);
         gl.BindTexture(GL_TEXTURE_2D, memStaging_[freshSlot]);
         gl.ActiveTexture(GL_TEXTURE0);
@@ -3645,6 +3666,11 @@ void HwGs::MergeWrites(const Gs::PageSet& pages)
         gl.Disable(GL_BLEND);
         gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         gl.BindVertexArray(emptyArray_);
+        if (barrier)
+        {
+            gl.TextureBarrierNV();
+        }
+
         const GLint rectUniform = uniform("rect");
         for (const auto& run : runs)
         {

@@ -65,5 +65,10 @@ here unchanged except for:
   in the shader. CTTR's glow (about 1,000 channel-shuffle sprites a frame reading the buffer they draw in as 8 bit texels,
   and the full-screen sprite adding it to the frame) was the software GS's: about ten GPU readbacks a frame. Its buffer and
   the pictures the same as before at 1x and 3x; the park from 24 frames a second to 28
+- `gs/backend.h`, `gs/gsmemory.cpp`, `hw/hwgs.cpp`: local memory known right for a texture or a CLUT by the blocks the CPU's
+  writes covered whole in any format (`PixelBlock`, `WholeBlocksOfRect`, `CpuHasRect`), such a texture decoded by the software
+  GS; the CPU's writes merged into memory's copy in place after a texture barrier (`hw/gl.*`: `TextureBarrierNV`, a copy pass
+  without it), their staging through a fresh buffer, and a write over pages with writes waiting merged with them later.
+  CTTR's race: 183 render passes a frame to 43
 
 Fixes made in either place should be copied to the other.
