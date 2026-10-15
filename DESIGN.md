@@ -315,13 +315,14 @@ the socket's buffers. The RPC blocks' layouts are in `iop/dbcman.cpp`, taken fro
   answer (buttons, sticks, the twelve pressures: padman's, from the same input) and the button profile (which bits and bytes of
   the data the mode has). ReceiveData asks for the mode, the state, the profile and the actuators; SendData sets the actuators
   (rumble isn't done: the call is answered as done).
-- The memory card (`iop/mc2.cpp`; mc2_s1 3020, File 2's): mc2_s1 is a page device. The card's file system (directories, files,
+- The memory card (`iop/mc2.cpp`; mc2_s1 3020, File 2's, and 2811, File 1's): mc2_s1 is a page device. The card's file system (directories, files,
   the FAT, the icons, formatting) is libmc2's, on the EE, which sends the driver page reads (their ECC checked), page writes
   (each block rewritten through two backup blocks, as the driver does it, so a write cut short can be finished), block erases
   and copies, and asks for the card's size and the clock. So the card can't be a folder of files as mcserv's are: it's a card
   image, `port0.ps2` in the memory cards' folder, 16384 pages of 528 bytes (data and spare area with the ECC), as PCSX2's .ps2
-  cards are laid out. A new one is blank (all FF), and the game offers to format it. File 1's mc2_s1 (2811) has another
-  protocol (12 commands, other checks): it's refused at load (logged), and File 1 sees no card.
+  cards are laid out. A new one is blank (all FF), and the game offers to format it. 2811 differs in the changed card's
+  handling (no command 13: the check clears it) and in how a write goes through the backup blocks and is found pending; the
+  rest is shared (`mc2.cpp`'s note has both).
 
 ### The PC menus (`runtime/src/ui/`)
 
@@ -377,7 +378,7 @@ and the renderer's speed is measured without the game's.
 ### Not done yet
 
 The SPU2's DMA timing, rumble, the
-memory card's newer protocols (libmc 2.6 on; libmc2 with File 1's mc2_s1 2811), movies (IPU), the VU flags in macro mode, the FPU's exact rounding.
+memory card's newer protocol (libmc 2.6 on), movies (IPU), the VU flags in macro mode, the FPU's exact rounding.
 
 ## Repositories and licences
 
