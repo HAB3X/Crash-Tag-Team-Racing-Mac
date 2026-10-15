@@ -25,7 +25,9 @@
 extern "C" void f_00304028(Ps2Cpu* c);
 extern "C" void f_00304080(Ps2Cpu* c);
 extern "C" void f_003044e0(Ps2Cpu* c);
-extern "C" void f_0030c488(Ps2Cpu* c);
+
+// Text::Draw with the control hints said for the device (src/hints.cpp)
+void CttrDrawText(Ps2Cpu* c);
 
 namespace
 {
@@ -200,7 +202,7 @@ extern "C" void CttrTextDraw(Ps2Cpu* c)
 {
     Point(c);
     Note(c->r[4].uw[0]);
-    f_0030c488(c);
+    CttrDrawText(c);
 }
 
 void CttrMenusVblank(int menu)
