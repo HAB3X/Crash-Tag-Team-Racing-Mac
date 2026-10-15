@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -628,7 +629,10 @@ void InputUpdate(double t, SDL_Window* window)
     {
         out[0] = out[1] = out[2] = out[3] = 0x80;
     }
-    g_anyHeld = pressed != 0 || out[2] != 0x80 || out[3] != 0x80;
+    // The left stick counts once it's pushed a quarter of the way: a gamepad's stick at rest is seldom exactly in the middle,
+    // and counted as held it kept "any button held" on for good (the skip never started, its prompt never came back)
+    constexpr int StickHeld = 0x20;
+    g_anyHeld = pressed != 0 || std::abs(out[2] - 0x80) > StickHeld || std::abs(out[3] - 0x80) > StickHeld;
     PadSetInput(0, pressed, out);
 }
 
