@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <vector>
 
 namespace Ps2
@@ -117,6 +118,13 @@ Pcrtc PcrtcOf(const Gs::Gs& gs)
     return p;
 }
 
+double ThreadCpuSeconds()
+{
+    timespec t = {};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+    return static_cast<double>(t.tv_sec) + static_cast<double>(t.tv_nsec) / 1e9;
+}
+
 u64 Fnv(const std::vector<u32>& pixels)
 {
     u64 h = 1469598103934665603ull;
@@ -200,6 +208,7 @@ bool GsReplay(Gs::Gs& gs, Ee::Gif& gif, const std::vector<u8>& file, u32 pass)
     size_t nextAt = 0;
     u64 vblanks = 0;
     auto start = std::chrono::steady_clock::now();
+    const double cpuStart = ThreadCpuSeconds();
     double picturesTime = 0;
     for (size_t at = 20 + size; at + sizeof(Header) <= file.size();)
     {
@@ -279,8 +288,9 @@ bool GsReplay(Gs::Gs& gs, Ee::Gif& gif, const std::vector<u8>& file, u32 pass)
         gs.backend()->Flush();
     }
     double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() - picturesTime;
-    Log("gs replay: pass %u: %llu vblanks drawn in %.3f s (%.1f vblanks a second)%s", pass + 1,
-        static_cast<unsigned long long>(vblanks), seconds, static_cast<double>(vblanks) / seconds,
+    // (the thread's own CPU time too: on a busy host the wall clock's varies with what else runs)
+    Log("gs replay: pass %u: %llu vblanks drawn in %.3f s (%.1f vblanks a second), %.3f s of the thread's CPU%s", pass + 1,
+        static_cast<unsigned long long>(vblanks), seconds, static_cast<double>(vblanks) / seconds, ThreadCpuSeconds() - cpuStart,
         hashes != nullptr ? ", the pictures' reads not counted" : "");
     if (hashes != nullptr)
     {
