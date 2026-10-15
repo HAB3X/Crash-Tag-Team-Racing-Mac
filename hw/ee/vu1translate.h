@@ -20,6 +20,8 @@ class Vu;
 
 // Makes VU1 run its programs translated (or as $PS2_VU1 says)
 void AttachVu1Translation(Vu& vu1);
+// The reports $PS2_VU1_PROFILE and $PS2_VU1_STATS ask for, now (else at exit)
+void ReportVu1();
 // Makes VU0 run its microprograms translated, the same way ($PS2_VU0: the same choices; none are translated yet)
 void AttachVu0Translation(Vu& vu0);
 
