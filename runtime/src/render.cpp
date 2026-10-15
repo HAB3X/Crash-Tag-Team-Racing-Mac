@@ -122,10 +122,15 @@ public:
         done_.wait(lock, [this] { return played_ == handed_; });
     }
 
-    // A picture queued (its number), and waiting until the render thread is at most `behind` pictures behind
+    // A picture queued (its number)
     u64 QueueFrame(std::function<void()> show)
     {
-        u64 frame = ++framesQueued_;
+        u64 frame;
+        {
+            // Read by a wait for the render thread on another thread (the timer thread queues while the game's waits)
+            std::lock_guard<std::mutex> lock(lock_);
+            frame = ++framesQueued_;
+        }
         Call([this, frame, show = std::move(show)] {
             show();
             {
@@ -135,6 +140,13 @@ public:
             done_.notify_all();
         });
         return frame;
+    }
+
+    // The pictures queued and not made yet
+    u64 Behind()
+    {
+        std::lock_guard<std::mutex> lock(lock_);
+        return framesQueued_ - framesMade_;
     }
 
     void WaitBehind(u64 behind)
@@ -290,14 +302,29 @@ void RenderSync()
     }
 }
 
-void RenderFrame(std::function<void()> show)
+// The pictures the game's thread may be ahead of the render thread
+constexpr u64 PicturesAhead = 2;
+
+bool RenderFrame(std::function<void()> show, bool always)
 {
     if (g_render == nullptr)
     {
         show();
-        return;
+        return true;
+    }
+    if (!always && g_render->Behind() >= PicturesAhead)
+    {
+        return false;
     }
     g_render->QueueFrame(std::move(show));
-    g_render->WaitBehind(2);
+    return true;
+}
+
+void RenderHold()
+{
+    if (g_render != nullptr)
+    {
+        g_render->WaitBehind(PicturesAhead);
+    }
 }
 }

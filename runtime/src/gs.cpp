@@ -276,12 +276,8 @@ void GsSetCrt(u32 interlaced, u32 mode, u32 field)
     RenderCall([gs, v] { gs->smode2.value = v; });
 }
 
-void GsVblank(bool start)
+bool GsVblank(bool newest, bool gameThread)
 {
-    if (!start)
-    {
-        return;
-    }
     u64 vblanks = ++g_vblanks;
     Gs::Gs* gs = g_hw.gs;
     RenderCall([gs] { CountFrame(*gs); });
@@ -295,7 +291,8 @@ void GsVblank(bool start)
     // fast the host draws and loads
     static double nextEvery = g_options.snapshotEvery;
     static size_t nextAt = 0;
-    std::vector<std::string> names;
+    // Due and not yet given a picture (they wait for the newest blank's)
+    static std::vector<std::string> names;
     if (!g_options.snapshotDir.empty())
     {
         double game = static_cast<double>(vblanks) / 59.94;
@@ -316,13 +313,13 @@ void GsVblank(bool start)
     // The picture: every frame for a window or snapshots (the game's thread kept at most two pictures ahead), its pixels read
     // for a snapshot when one is due
     bool show = !g_options.headless || !g_options.ui.empty();
-    if (!show && g_options.snapshotDir.empty())
+    if ((!show && g_options.snapshotDir.empty()) || !newest)
     {
-        return;
+        return false;
     }
     // Made on the GS's side once it has drawn what came before (the game's thread goes on, at most two pictures ahead): the
     // GPU's picture copied for the window, the pixels read when there's no copy or a snapshot wants them
-    RenderFrame([show, names = std::move(names)] {
+    bool queued = RenderFrame([show, names = names] {
         Gs::DisplayImage image;
         bool copied = false;
         if (show && DisplayOnGpu())
@@ -370,7 +367,12 @@ void GsVblank(bool start)
         g_picture = std::move(image);
         g_pictureSerial++;
         g_pictureCv.notify_all();
-    });
+    }, gameThread);
+    if (queued)
+    {
+        names.clear();
+    }
+    return gameThread;
 }
 
 void PresenterStop()
