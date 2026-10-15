@@ -22,3 +22,31 @@ ps2_recompile(cttr_code CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/config/cttr.toml DISC
 
 add_executable(crash-cttr src/main.cpp src/fibers.cpp src/radiop.cpp src/audio.cpp)
 target_link_libraries(crash-cttr PRIVATE cttr_code ps2runtime)
+
+if(APPLE)
+    # A Mac app (build/crash-cttr.app; the release names it "Crash Tag Team Racing.app": the executable keeps its name, which
+    # the runs' lock looks for), with the icon tools/make_icon.py makes from the game's own art on your disc: the save icon
+    # (a crate with Crash's face, in COMMON.RCF), lit and blended as its flat colours and single picture want (with the
+    # python3 on the PATH: it needs Pillow and NumPy)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(ICON ${CMAKE_CURRENT_BINARY_DIR}/icon/AppIcon.icns)
+    add_custom_command(
+        OUTPUT ${ICON}
+        COMMAND /usr/bin/env python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_icon.py ${CTTR_DISC}
+                --icon COMMON/COMMON.RCF:art/memcard/crash.ico --yaw 20 --pitch 15 --light --smooth
+                --out ${CMAKE_CURRENT_BINARY_DIR}/icon
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_icon.py
+        COMMENT "Making the app's icon from the disc"
+        VERBATIM)
+    target_sources(crash-cttr PRIVATE ${ICON})
+    set_source_files_properties(${ICON} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(crash-cttr PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in
+        MACOSX_BUNDLE_BUNDLE_NAME "Crash Tag Team Racing"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.crashtagteamracing.native"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+        MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+        MACOSX_BUNDLE_ICON_FILE AppIcon)
+
+endif()
