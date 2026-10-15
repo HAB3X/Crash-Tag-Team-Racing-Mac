@@ -306,6 +306,14 @@ vblank period in which the game presented a picture: an enabled circuit's DISPFB
 something was drawn or transferred into the buffer shown (CTTR copies each finished picture into one display buffer it
 never moves, which DISPFB alone counted as no frames at all). It's counted on the GS's side, in order with what the game sent.
 
+`--gs-record S:N:FILE` records the GS's side for N vblanks from the game's S-th second: the GS's and the GIF's state (local
+memory made current from the GPU first), then the GIF's data and VU1's kicks in order and the PCRTC's registers at each vblank
+(`gsrecord.cpp`; with the render thread). `--gs-replay FILE[:PASSES]` plays one back through the GS alone in place of the game,
+logging how long its vblanks took to draw; with `--snapshots` it writes each vblank's picture's hash to `replay.txt` there and
+saves the pictures `--snapshot-at`/`--snapshot-every` name by the recording's own times. The same recording drawn by two builds
+gives the same hashes when nothing that shows changed (a game's own pictures differ from run to run with the frames it skips),
+and the renderer's speed is measured without the game's.
+
 ### Not done yet
 
 The SPU2's DMA timing, rumble, the

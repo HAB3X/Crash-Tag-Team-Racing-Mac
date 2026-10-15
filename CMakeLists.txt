@@ -40,6 +40,7 @@ add_library(ps2runtime STATIC
     runtime/src/display.cpp
     runtime/src/dmac.cpp
     runtime/src/gs.cpp
+    runtime/src/gsrecord.cpp
     runtime/src/input.cpp
     runtime/src/io.cpp
     runtime/src/kernel.cpp

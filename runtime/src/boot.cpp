@@ -35,7 +35,8 @@ void Usage(const char* program)
             "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--settings DIR]\n"
             "          [--press S:BUTTON[+BUTTON][:HOLD],...]\n"
             "          [--type S:TEXT] [--click S:X,Y] [--ui S:KEY,KEY,...]\n"
-            "          [--fps] [--gs hardware|software] [--scale 1-8] [--texture-upscale 0|2|4] [--mute] [--audio-dump FILE.wav]\n",
+            "          [--fps] [--gs hardware|software] [--scale 1-8] [--texture-upscale 0|2|4] [--mute] [--audio-dump FILE.wav]\n"
+            "          [--gs-record S:VBLANKS:FILE] [--gs-replay FILE[:PASSES]]\n",
             program);
 }
 
@@ -233,6 +234,33 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
         else if (a == "--texture-upscale")
         {
             g_options.textureUpscale = atoi(next().c_str());
+        }
+        else if (a == "--gs-record")
+        {
+            // 95:120:/tmp/park.gsrec: from the game's 95th second, 120 vblanks
+            std::string item = next();
+            size_t c1 = item.find(':');
+            size_t c2 = c1 == std::string::npos ? std::string::npos : item.find(':', c1 + 1);
+            if (c2 == std::string::npos)
+            {
+                Usage(argv[0]);
+                return 2;
+            }
+            g_options.gsRecordAt = atof(item.substr(0, c1).c_str());
+            g_options.gsRecordVblanks = strtoull(item.c_str() + c1 + 1, nullptr, 10);
+            g_options.gsRecordFile = item.substr(c2 + 1);
+        }
+        else if (a == "--gs-replay")
+        {
+            std::string item = next();
+            size_t colon = item.rfind(':');
+            if (colon != std::string::npos && colon + 1 < item.size() &&
+                item.find_first_not_of("0123456789", colon + 1) == std::string::npos)
+            {
+                g_options.gsReplayPasses = static_cast<u32>(std::max(1, atoi(item.c_str() + colon + 1)));
+                item.resize(colon);
+            }
+            g_options.gsReplayFile = item;
         }
         else if (a == "--fps")
         {
@@ -441,6 +469,37 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
         game->init();
     }
     GsInit();
+    if (!g_options.gsReplayFile.empty())
+    {
+        // A recording of the GS's side played back in place of the game (gsrecord.cpp)
+        std::thread replay([] {
+            ThreadOnPerformanceCores();
+            std::vector<u8> file;
+            if (FILE* f = fopen(g_options.gsReplayFile.c_str(), "rb"))
+            {
+                fseek(f, 0, SEEK_END);
+                file.resize(static_cast<size_t>(ftell(f)));
+                fseek(f, 0, SEEK_SET);
+                file.resize(fread(file.data(), 1, file.size(), f));
+                fclose(f);
+            }
+            else
+            {
+                Log("gs replay: can't read %s", g_options.gsReplayFile.c_str());
+            }
+            bool ok = !file.empty();
+            for (u32 pass = 0; ok && pass < g_options.gsReplayPasses; pass++)
+            {
+                RenderCall([&file, &ok, pass] { ok = GsReplay(*Hw().gs, *Hw().gif, file, pass); });
+                RenderSync();
+            }
+            PresenterStop();
+        });
+        replay.detach();
+        PresenterRun();
+        fflush(stderr);
+        _exit(0);
+    }
     IopInit();
     SoundInit();
     IoInit();

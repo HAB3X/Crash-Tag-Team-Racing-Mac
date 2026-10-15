@@ -204,6 +204,13 @@ struct Options
     // The PC menus driven by a script (--ui): from a time of the game's, keys pressed one after another and the window's
     // pictures with the menus saved in the snapshots' folder (ui/menus.cpp)
     std::vector<std::pair<double, std::string>> ui;
+    // The GS's side recorded from a time of the game's for so many vblanks (--gs-record S:N:FILE), or a recording played back
+    // in place of the game, so many times (--gs-replay FILE[:PASSES]; gsrecord.cpp)
+    std::string gsRecordFile;
+    double gsRecordAt = 0;
+    u64 gsRecordVblanks = 0;
+    std::string gsReplayFile;
+    u32 gsReplayPasses = 1;
 };
 extern Options g_options;
 
@@ -216,6 +223,11 @@ void RenderFlush();
 void RenderSync();
 // A picture made on the GS's side; returns once the render thread is at most two pictures behind
 void RenderFrame(std::function<void()> show);
+
+// --- gsrecord.cpp: the GS's side recorded (on that side: the GIF's data and kicks in order, and each vblank) and played back
+void GsRecordData(u32 path, const u8* data, u32 quadwords, bool kick);
+void GsRecordVblank(Gs::Gs& gs, Ee::Gif& gif, u64 vblank);
+bool GsReplay(Gs::Gs& gs, Ee::Gif& gif, const std::vector<u8>& file, u32 pass);
 
 // --- display.cpp: the window (OpenGL) and the picture's way from the GS to it
 // The window and the GPU's contexts made (the main thread, before RenderStart): the window, or null when headless

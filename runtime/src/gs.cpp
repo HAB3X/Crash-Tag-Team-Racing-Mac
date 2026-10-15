@@ -284,7 +284,11 @@ void GsVblank(bool start)
     }
     u64 vblanks = ++g_vblanks;
     Gs::Gs* gs = g_hw.gs;
-    RenderCall([gs] { CountFrame(*gs); });
+    Ee::Gif* gif = g_hw.gif;
+    RenderCall([gs, gif, vblanks] {
+        CountFrame(*gs);
+        GsRecordVblank(*gs, *gif, vblanks);
+    });
     g_field ^= 1;
     g_csr |= 8;
     if (!(g_imr & 0x800))
