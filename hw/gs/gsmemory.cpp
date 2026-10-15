@@ -3,6 +3,7 @@
 #include "gs.h"
 #include "backend.h"
 
+#include <unordered_map>
 #include <vector>
 
 namespace Gs
@@ -423,6 +424,47 @@ void PagesOfRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bott
     entry.bottom = bottom;
     entry.pages = found;
     pages |= found;
+}
+
+u32 PixelBlock(u32 psm, u32 x, u32 y, u32 bp, u32 bw)
+{
+    // A page's 32 blocks: a pixel's block is its address less the bits within a block
+    switch (psm)
+    {
+    case PSMCT16: return PixelAddress16(x, y, bp, bw) >> 7;
+    case PSMCT16S: return PixelAddress16S(x, y, bp, bw) >> 7;
+    case PSMZ16: return PixelAddress16Z(x, y, bp, bw) >> 7;
+    case PSMZ16S: return PixelAddress16SZ(x, y, bp, bw) >> 7;
+    case PSMT8: return PixelAddress8(x, y, bp, bw) >> 8;
+    case PSMT4: return PixelAddress4(x, y, bp, bw) >> 9;
+    case PSMZ32:
+    case PSMZ24: return PixelAddress32Z(x, y, bp, bw) >> 6;
+    default: return PixelAddress32(x, y, bp, bw) >> 6;
+    }
+}
+
+void WholeBlocksOfRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bottom, BlockSet& blocks)
+{
+    // As FullPagesOfRect: the rectangle's whole 8x8 cells (each in one block), counted by block
+    u32 bits = BitsPerPixel(psm == PSMCT24 || psm == PSMZ24 ? PSMCT32 : psm);
+    if (bits == 0 || right < left || bottom < top)
+    {
+        return;
+    }
+
+    const u32 cellsInBlock = 256 * 8 / bits / 64;
+    std::unordered_map<u32, u32> counts;
+    for (s32 y = (top + 7) & ~7; y + 7 <= bottom; y += 8)
+    {
+        for (s32 x = (left + 7) & ~7; x + 7 <= right; x += 8)
+        {
+            u32 block = PixelBlock(psm, static_cast<u32>(x) & 2047, static_cast<u32>(y) & 2047, bp, bw) & (BlockCount - 1);
+            if (++counts[block] == cellsInBlock)
+            {
+                blocks.set(block);
+            }
+        }
+    }
 }
 
 void FullPagesOfRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bottom, PageSet& pages)
