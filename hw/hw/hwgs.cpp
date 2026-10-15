@@ -296,6 +296,10 @@ struct BatchKey
     u32 zMaxU;
     // The depth test at the GS's sample point (the block's first sample) in the shader: its ZTST, 0 for GL's own test
     u32 nativeDepthTest;
+    // A texture's region clamp or repeat: WMS, WMT, the GS's bilinear filter (1) or none, and the texture's samples a texel;
+    // MINU, MAXU, MINV, MAXV
+    u32 regionMode[4];
+    u32 regionBounds[4];
 };
 
 // The shader's features (its variant's bits)
@@ -322,6 +326,7 @@ enum ProgramBits : u32
     BitWrapAdd = 1u << 22,
     BitNativeDepth = 1u << 23,
     BitNativeTexel = 1u << 24,
+    BitRegion = 1u << 25,
 };
 
 constexpr const char* VertexSource = R"(#version 330 core
@@ -389,10 +394,62 @@ uniform int depthReverse;
 uniform sampler2D depthCopy;
 uniform int nativeZtst;
 uniform int targetScale;
+uniform ivec4 regionMode;
+uniform ivec4 regionBounds;
 vec3 Pick(int select, vec3 source, vec3 destination)
 {
     return select == 0 ? source : select == 1 ? destination : vec3(0.0);
 }
+#if REGION
+// A texel coordinate wrapped by CLAMP's mode as the software GS wraps it (its region modes kept inside the level)
+int RegionWrap(int c, int mode, int size, int low, int high)
+{
+    return mode == 0 ? c & (size - 1) : mode == 1 ? clamp(c, 0, size - 1)
+                                      : mode == 2 ? min(c < low ? low : high < c ? high : c, size - 1)
+                                                  : min((c & low) | high, size - 1);
+}
+// A sample of the texture (n samples a texel across and down): its texel wrapped, a clamped texel's samples clamped to its
+// edge's, as the software GS reads a shadow
+vec4 RegionTexel(ivec2 at)
+{
+    int n = regionMode.w;
+    ivec2 texel = ivec2(floor(vec2(at) / float(n)));
+    ivec2 within = at - texel * n;
+    ivec2 size = ivec2(texSize);
+    ivec2 wrapped = ivec2(RegionWrap(texel.x, regionMode.x, size.x, regionBounds.x, regionBounds.y),
+                          RegionWrap(texel.y, regionMode.y, size.y, regionBounds.z, regionBounds.w));
+    if ((regionMode.x == 1 || regionMode.x == 2) && wrapped.x != texel.x)
+    {
+        within.x = texel.x < wrapped.x ? 0 : n - 1;
+    }
+    if ((regionMode.y == 1 || regionMode.y == 2) && wrapped.y != texel.y)
+    {
+        within.y = texel.y < wrapped.y ? 0 : n - 1;
+    }
+    return floor(texelFetch(tex, wrapped * n + within, 0) * 255.0 + 0.5);
+}
+// The GS's bilinear step: a + (b - a) * f >> 4
+vec4 Lerp4(vec4 a, vec4 b, float f)
+{
+    return a + floor((b - a) * f / 16.0);
+}
+// The texture read as the GS reads it with a region clamp or repeat: the sample at the coordinates, or the four round them
+// (half a sample off) weighted by 4 bit fractions, each wrapped on its own
+vec4 RegionSample(vec2 uv)
+{
+    vec2 at = uv * float(regionMode.w);
+    if (regionMode.z == 0)
+    {
+        return RegionTexel(ivec2(floor(at)));
+    }
+    ivec2 sixteenths = ivec2(floor((at - 0.5) * 16.0));
+    ivec2 i = sixteenths >> 4;
+    vec2 f = vec2(sixteenths & 15);
+    vec4 top = Lerp4(RegionTexel(i), RegionTexel(i + ivec2(1, 0)), f.x);
+    vec4 bottom = Lerp4(RegionTexel(i + ivec2(0, 1)), RegionTexel(i + ivec2(1, 1)), f.x);
+    return Lerp4(top, bottom, f.y);
+}
+#endif
 // The depth at the GS's sample point: the pixel's centre is 1/256 of a pixel past it (right and down, see the top), which on
 // a steep surface is a unit or two of depth; the GS truncates it (exactly, while the value is below 2^24)
 float GsDepth()
@@ -458,11 +515,15 @@ void main()
 #endif
     // A target at a higher scale than the frame, unfiltered: the texel's first sample, the one at the GS's sample point (any
     // other sits up to a pixel's fraction away, across an edge the PS2's resolution doesn't have)
+#if REGION
+    vec4 t = RegionSample(uv);
+#else
     if (texSnap > 0.0)
     {
         uv = floor(uv) + 0.5 / texSnap;
     }
     vec4 t = floor(textureLod(tex, uv / texActual, lod) * 255.0 + 0.5);
+#endif
 #if TEXALPHA == 1
     t.a = (aem != 0 && t.r + t.g + t.b == 0.0) ? 0.0 : ta0;
 #elif TEXALPHA == 2
@@ -1101,6 +1162,8 @@ struct Program
     GLint colclamp;
     GLint datm;
     GLint frameMask;
+    GLint regionMode;
+    GLint regionBounds;
 };
 
 struct CachedTexture
@@ -1689,6 +1752,7 @@ const Program& HwGs::ProgramFor(u32 bits)
     define("WRAPADD", (bits & BitWrapAdd) ? 1 : 0);
     define("NATIVEDEPTH", (bits & BitNativeDepth) ? 1 : 0);
     define("NATIVETEXEL", (bits & BitNativeTexel) ? 1 : 0);
+    define("REGION", (bits & BitRegion) ? 1 : 0);
     GLuint vertex = CompileShader(GL_VERTEX_SHADER, VertexSource);
     GLuint fragment = CompileShader(GL_FRAGMENT_SHADER, header + FragmentSource);
     Gl& gl = GetGl();
@@ -1730,6 +1794,8 @@ const Program& HwGs::ProgramFor(u32 bits)
     p.colclamp = gl.GetUniformLocation(p.id, "colclamp");
     p.datm = gl.GetUniformLocation(p.id, "datm");
     p.frameMask = gl.GetUniformLocation(p.id, "frameMask");
+    p.regionMode = gl.GetUniformLocation(p.id, "regionMode");
+    p.regionBounds = gl.GetUniformLocation(p.id, "regionBounds");
     return programs_[bits] = p;
 }
 
@@ -3955,6 +4021,33 @@ bool HwGs::Fallback(const Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, 
     return false;
 }
 
+// The texels a range of coordinates reads through a region clamp or repeat, as the software GS wraps them (its own clamp's
+// order of tests, the level's size kept): exact for a span the loop can walk, else the whole level
+void RegionRange(u32 mode, s32 size, u32 low, u32 high, s32* first, s32* last)
+{
+    if (*last - *first > 4096)
+    {
+        *first = 0;
+        *last = size - 1;
+        return;
+    }
+
+    const s32 lo = static_cast<s32>(low);
+    const s32 hi = static_cast<s32>(high);
+    s32 least = size - 1;
+    s32 most = 0;
+    for (s32 c = *first; c <= *last; c++)
+    {
+        s32 wrapped = mode == Gs::WrapRegionClamp ? (c < lo ? lo : hi < c ? hi : c) : static_cast<s32>((static_cast<u32>(c) & low) | high);
+        wrapped = std::min(wrapped, size - 1);
+        least = std::min(least, wrapped);
+        most = std::max(most, wrapped);
+    }
+
+    *first = least;
+    *last = most;
+}
+
 // The GL blend for the GS's ((A - B) * C >> 7) + D (A, B, D: 0 source, 1 destination, 2 zero); false when GL can't make it
 bool BlendFor(u32 a, u32 b, u32 d, GLenum factor, GLenum inverse, u32* equation, u32* source, u32* destination)
 {
@@ -4222,9 +4315,13 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         return Fallback(state, vertexes, count, rect, "a depth buffer in a colour format");
     }
 
-    if (state.textured && (state.wms >= Gs::WrapRegionClamp || state.wmt >= Gs::WrapRegionClamp))
+    // A texture's region clamp or repeat: the shader wraps each texel it reads and filters as the GS does (RegionSample), with
+    // one filter for the draw (none for mipmaps, or a filter that the level of detail would choose)
+    const bool region = state.textured && (state.wms >= Gs::WrapRegionClamp || state.wmt >= Gs::WrapRegionClamp);
+    const bool regionLinear = state.magLinear;
+    if (region && (state.mipmapped || state.levels[0].scale != 1 || (state.mxl != 0 && regionLinear != ((state.mmin & 1) != 0))))
     {
-        return Fallback(state, vertexes, count, rect, "a texture's region clamp or repeat");
+        return Fallback(state, vertexes, count, rect, "a texture's region clamp or repeat with mipmaps or two filters");
     }
 
     BatchKey key;
@@ -4332,7 +4429,9 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
             glCan = false;
         }
 
-        if (glCan && !shaderBlend &&
+        // (a texture's region modes are effects that build on what they drew before, CTTR's glow frame after frame: blended
+        // with the GS's truncation, not GL's rounding)
+        if (glCan && !shaderBlend && !region &&
             BlendFor(state.blendA, state.blendB, state.blendD, factor, inverse, &key.blendEquation, &key.blendSource,
                      &key.blendDestination))
         {
@@ -4474,6 +4573,16 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
             // As the decoder takes it: a clamped coordinate's range clamped, a repeating one's whole unless it stays inside
             s32 w = static_cast<s32>(level.width);
             s32 h = static_cast<s32>(level.height);
+            if (state.wms >= Gs::WrapRegionClamp)
+            {
+                RegionRange(state.wms, w, level.minu, level.maxu, &l, &r);
+            }
+
+            if (state.wmt >= Gs::WrapRegionClamp)
+            {
+                RegionRange(state.wmt, h, level.minv, level.maxv, &t, &b);
+            }
+
             if (state.wms == Gs::WrapClamp || (l >= 0 && r < w))
             {
                 left = std::clamp(l, 0, w - 1);
@@ -4773,7 +4882,7 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
                 }
             }
 
-            if (cached.replacement != 0 && ReplacementsEnabled())
+            if (cached.replacement != 0 && ReplacementsEnabled() && !region)
             {
                 // Sampled with the original's normalised coordinates; its mipmaps for the original's levels
                 texture = cached.replacement;
@@ -4808,6 +4917,24 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
             key.ta0 = texa.ta0;
             key.ta1 = texa.ta1;
             key.aem = texa.aem;
+        }
+
+        if (region)
+        {
+            // The shader reads whole texels (samples of a target's) and filters them itself
+            program |= BitRegion;
+            key.regionMode[0] = state.wms;
+            key.regionMode[1] = state.wmt;
+            key.regionMode[2] = regionLinear ? 1 : 0;
+            key.regionMode[3] = source != nullptr ? source->scale : 1;
+            key.regionBounds[0] = level.minu;
+            key.regionBounds[1] = level.maxu;
+            key.regionBounds[2] = level.minv;
+            key.regionBounds[3] = level.maxv;
+            key.magFilter = GL_NEAREST;
+            key.minFilter = GL_NEAREST;
+            key.anisotropy = 1;
+            key.texSnap = 0;
         }
     }
 
@@ -5433,6 +5560,14 @@ void HwGs::Flush()
         gl.Uniform1iv(p.dimx, 16, dimx);
         gl.Uniform1f(p.scale, static_cast<f32>(k.ditherScale != 0 ? k.ditherScale : 1));
         gl.Uniform1i(p.colclamp, static_cast<GLint>(k.colclamp));
+        if (k.program & BitRegion)
+        {
+            gl.Uniform4i(p.regionMode, static_cast<GLint>(k.regionMode[0]), static_cast<GLint>(k.regionMode[1]),
+                         static_cast<GLint>(k.regionMode[2]), static_cast<GLint>(k.regionMode[3]));
+            gl.Uniform4i(p.regionBounds, static_cast<GLint>(k.regionBounds[0]), static_cast<GLint>(k.regionBounds[1]),
+                         static_cast<GLint>(k.regionBounds[2]), static_cast<GLint>(k.regionBounds[3]));
+        }
+
         if (k.program & BitWrapAdd)
         {
             gl.Uniform1i(p.blendA, static_cast<GLint>(k.gsBlend[0]));
