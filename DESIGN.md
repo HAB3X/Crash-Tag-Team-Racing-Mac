@@ -301,7 +301,8 @@ actions, going back from them goes back to the game, and the game just waits whi
   the program) baked into atlases per size with stb_truetype. The mouse's places are hit regions recorded as each frame is drawn.
 - The settings: the display's in `graphics.txt` (as before, with the new ones added), the rest and the game's own in
   `options.txt`. `--settings DIR` uses another folder (tests).
-- The game's prompt (`ps2_show_prompt`) is drawn near the picture's bottom in the menus' style while the game plays.
+- The game's prompt (`ps2_show_prompt`) is drawn near the picture's bottom in the menus' style while the game plays, fading
+  in as it's shown (a quarter of a second) and out as it's taken down (half a second); headless pictures show it as it stands.
 - `--ui S:KEY,...` drives the menus from a time of the game's: keys (esc, enter, up, down, left, right, tab, prevtab, q, e,
   back, delete, space), `mouse:XxY`/`click:XxY` in reference pixels, `wheelup`/`wheeldown`, `pad-back`, `wait`, and `shot`,
   which saves the window with the menus as `uiNN.png` in the snapshots' folder (the window's pixels; headless, a hidden

@@ -152,8 +152,8 @@ std::string PadControlText(PadControl control, PromptStyle style);
 // The view (menuview.cpp)
 class OverlayFrame;
 void DrawMenus(OverlayFrame& frame, const MenuView& view, std::vector<HitRegion>& regions);
-// The game's prompt at the bottom of the picture (its place in reference pixels)
-void DrawGamePrompt(OverlayFrame& frame, const std::string& text, f32 left, f32 top, f32 width, f32 height);
+// The game's prompt at the bottom of the picture (its place in reference pixels), at an opacity (0-1: it fades in and out)
+void DrawGamePrompt(OverlayFrame& frame, const std::string& text, f32 opacity, f32 left, f32 top, f32 width, f32 height);
 // The cursor (the scripted pictures' pointer: there's no system pointer in them)
 void DrawCursor(OverlayFrame& frame, f32 x, f32 y, bool overClickable);
 }

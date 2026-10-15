@@ -334,6 +334,18 @@ Clock::time_point g_repeatAt;
 int g_heldDirection = -1;
 // The hit regions the view recorded last frame
 std::vector<HitRegion> g_regions;
+// The game's prompt as drawn: it fades in as it's shown and out as it's taken down (the Crash Twinsanity port's letterbox
+// text fades in), from wherever it was when it changed
+struct PromptFade
+{
+    std::string text;
+    bool shown = false;
+    f32 from = 0.0f;
+    Clock::time_point changed;
+};
+PromptFade g_promptFade;
+constexpr float PromptFadeInSeconds = 0.25f;
+constexpr float PromptFadeOutSeconds = 0.5f;
 
 // The script (--ui): its keys, the next one's time (the steady clock's), the pictures' count, the cursor it put somewhere
 std::vector<std::string> g_script;
@@ -1755,11 +1767,41 @@ std::string MenusShotDue()
     return shot;
 }
 
+// The game's prompt's opacity now (0-1), following what the game asks for (empty: none)
+static f32 PromptOpacity(const std::string& asked)
+{
+    PromptFade& f = g_promptFade;
+    Clock::time_point now = Clock::now();
+    auto at = [&f, now] {
+        f32 target = f.shown ? 1.0f : 0.0f;
+        if (g_options.headless)
+        {
+            // Drawn only for the scripted pictures, each showing the prompt as it stands
+            return target;
+        }
+        float seconds = std::chrono::duration<float>(now - f.changed).count();
+        float t = std::min(1.0f, seconds / (f.shown ? PromptFadeInSeconds : PromptFadeOutSeconds));
+        return f.from + (target - f.from) * t;
+    };
+    bool show = !asked.empty();
+    if (show != f.shown || (show && asked != f.text))
+    {
+        f.from = asked != f.text && show ? 0.0f : at();
+        f.shown = show;
+        f.changed = now;
+        if (show)
+        {
+            f.text = asked;
+        }
+    }
+    return at();
+}
+
 void MenusDraw(int pixelWidth, int pixelHeight, float pixelScale, const SDL_FRect& picture)
 {
     NoteWindow(pixelWidth, pixelHeight, pixelScale);
-    std::string prompt = g_screen == Screen::None ? InputPrompt() : std::string();
-    if (g_screen == Screen::None && prompt.empty())
+    f32 promptOpacity = PromptOpacity(g_screen == Screen::None ? InputPrompt() : std::string());
+    if (g_screen == Screen::None && promptOpacity <= 0.0f)
     {
         return;
     }
@@ -1770,7 +1812,7 @@ void MenusDraw(int pixelWidth, int pixelHeight, float pixelScale, const SDL_FRec
         f32 left, top, right, bottom;
         PixelsToReference(picture.x, picture.y, &left, &top);
         PixelsToReference(picture.x + picture.w, picture.y + picture.h, &right, &bottom);
-        DrawGamePrompt(frame, prompt, left, top, right - left, bottom - top);
+        DrawGamePrompt(frame, g_promptFade.text, promptOpacity, left, top, right - left, bottom - top);
     }
     else
     {
