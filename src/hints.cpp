@@ -8,11 +8,14 @@
 // circle, » and ³ triangle, ¼ square, ½ and ² the left stick, ¾ the d-pad, ¶ Select, · L1, ¸ R1; START is written out.
 // Every text is drawn by Text::Draw (0x30C488; a0 the text, +140 its UTF-16 string): one with a button in it is drawn with a
 // string of its own, put on the game's stack below the frame it's drawn from, the text's layout (0x30C718: its alignment's
-// offsets, +100 and +104) worked out for it, and the text's own string and layout put back afterwards.
+// offsets, +100 and +104) worked out for it, and the text's own string and layout put back afterwards. A name longer than the
+// button's picture (about two letters wide) would push the text past its box (+88 wide), where it wraps out of sight ("¶
+// DISABLE" is a short box): the text is drawn smaller (its size, +156) by as much as it grew, down to two thirds.
 #include "ps2/iop.h"
 #include "ps2/recomp.h"
 #include "ps2/runtime.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <string>
@@ -118,6 +121,18 @@ void CttrDrawText(Ps2Cpu* c)
         f_0030c488(c);
         return;
     }
+    // The button's picture is about two letters wide
+    std::u16string original = ReadString(own);
+    size_t pictures = 0;
+    for (char16_t ch : original)
+    {
+        pictures += ControlOf(ch) != nullptr ? 1 : 0;
+    }
+    float grown = static_cast<float>(said.size()) / static_cast<float>(original.size() + pictures);
+    float size;
+    std::memcpy(&size, Ps2::EeMemory(text + 156), 4);
+    float smaller = grown > 1 ? size * std::max(2.0f / 3.0f, 1 / grown) : size;
+    std::memcpy(Ps2::EeMemory(text + 156), &smaller, 4);
     u64 sp = c->r[29].ud[0];
     u32 at = static_cast<u32>(sp) - Room;
     std::memcpy(Ps2::EeMemory(at), said.c_str(), 2 * (said.size() + 1));
@@ -127,6 +142,7 @@ void CttrDrawText(Ps2Cpu* c)
     c->r[4].ud[0] = text;
     f_0030c488(c);
     std::memcpy(Ps2::EeMemory(text + 140), &own, 4);
+    std::memcpy(Ps2::EeMemory(text + 156), &size, 4);
     Layout(c, text);
     c->r[29].ud[0] = sp;
 }
