@@ -95,6 +95,25 @@ def read_raw_programs(elf_path, config_path):
     return programs
 
 
+def read_raw_entries(config_path):
+    """The config's extra entries into its bare programs ({index among them: [offsets]}, and how many programs it names). A
+    JR's targets are in VU memory (a table the game uploads), so the translation can't find them: a profile does
+    ($PS2_VU1_PROFILE's runs interpreted from an offset)."""
+    if config_path is None:
+        return {}, 0
+    import tomllib
+    with open(config_path, 'rb') as f:
+        vu1 = tomllib.load(f).get('vu1', {})
+    starts = [int(r[0], 0) if isinstance(r[0], str) else r[0] for r in vu1.get('programs', [])]
+    entries = {}
+    for start, offsets in vu1.get('entries', []):
+        start = int(start, 0) if isinstance(start, str) else start
+        if start not in starts:
+            raise SystemExit('vu1 entries: %#x is no program of [vu1] programs' % start)
+        entries[starts.index(start)] = [int(o, 0) if isinstance(o, str) else o for o in offsets]
+    return entries, len(starts)
+
+
 def read_programs(elf_path, config_path=None):
     """Each .vutext packet's instructions at consecutive addresses: (micro address, [instructions]), duplicates once; then the
     config's bare programs."""
@@ -904,6 +923,14 @@ def translate_all(root, config_path=None):
                 if 0 <= target < tr.size:
                     run_entries.append((tr, target))
                     indirect_entries.append((tr, target))
+
+    # The config's entries (a JR's targets the game's tables hold): as a call's return is entered
+    if config_path is not None:
+        entries, raw = read_raw_entries(config_path)
+        for index, offsets in entries.items():
+            tr = translators[len(translators) - raw + index]
+            for o in offsets:
+                indirect_entries.append((tr, o))
 
     for tr in translators:
         tr.pending = []
