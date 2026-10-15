@@ -3,12 +3,15 @@
 
 void CttrRegisterRadIop();
 void CttrRegisterAudio();
+void CttrPcText();
 
-// Before the boot: the game's own IOP modules (src/radiop.cpp: Bink's; src/audio.cpp: Radical's audio)
+// Before the boot: the game's own IOP modules (src/radiop.cpp: Bink's; src/audio.cpp: Radical's audio), and its texts said as
+// a computer's (src/pctext.cpp)
 static void CttrInit()
 {
     CttrRegisterRadIop();
     CttrRegisterAudio();
+    CttrPcText();
     // The network: at the boot the game loads only NETCNF.IRX and EZNETCNF.IRX (the network configuration's modules) and
     // binds none of their servers, so the loader's "loaded" is all they need for now. Online play goes here, as a virtual
     // network adapter: the IOP side of ENT_SMAP and DEV9 (loaded when the game goes online) high level, passing the EE
