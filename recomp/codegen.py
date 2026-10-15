@@ -411,8 +411,11 @@ def branch_condition(i):
 
 
 class FunctionEmitter:
-    def __init__(self, program, start, end, names, overrides, setjmps=frozenset(), encrypted=False):
+    def __init__(self, program, start, end, names, overrides, setjmps=frozenset(), encrypted=False, prefix="f"):
         self.p = program
+        # The generated body's C name is <prefix>_XXXXXXXX: f for the executable, an overlay's name for its functions (an
+        # override replaces the function in names, the body keeps this name for it to call)
+        self.prefix = prefix
         self.start = start
         self.end = end
         self.names = names            # address -> C name of every function (overrides already applied)
@@ -459,7 +462,7 @@ class FunctionEmitter:
         slot_labels = labels & delay_slots
         for a in slot_labels:
             labels.add(a + 4)
-        lines = [f"void f_{self.start:08x}(Ps2Cpu* c)", "{"]
+        lines = [f"void {self.prefix}_{self.start:08x}(Ps2Cpu* c)", "{"]
         a_prev = None
         for a in reached:
             if a in delay_slots:

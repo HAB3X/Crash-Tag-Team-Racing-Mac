@@ -4,7 +4,9 @@
 #include "iop.h"
 #include "ps2/sound.h"
 
+#include <algorithm>
 #include <map>
+#include <vector>
 
 namespace Ps2
 {
@@ -106,8 +108,8 @@ int ReadFile(int fd, u32 dest, u32 size)
     return static_cast<int>(size);
 }
 
-// The modules' version (their version calls answer it as 4 characters): the IOP replacement image's SDK release, from its
-// name at the IOP's reset ("IOPRP250.IMG" is release 2.5.0, "2500")
+// The modules' version (their version calls answer it as 4 characters): the IOP replacement image's, as its FILEIO module
+// names itself ("PsIIfileio  2800"); the boot ROM's until the game resets the IOP with an image
 char g_version[4] = {'2', '5', '0', '0'};
 
 void Version(RpcCall& c)
@@ -632,14 +634,30 @@ const char* IopServerName(u32 sid)
 
 void IopServersInit() {}
 
-void IopSetImage(const std::string& path)
+void IopSetImage(const std::string& reset)
 {
-    size_t at = path.find("IOPRP");
-    if (at != std::string::npos && at + 8 <= path.size())
+    // "rom0:UDNL cdrom0:\IRX\IOPRP280.IMG;1": the image on the disc after the device. Its name doesn't always say the
+    // release (Biohazard Outbreak's is DNAS280.IMG), so it's read: its modules carry their ID strings
+    size_t at = reset.find("cdrom0:");
+    if (at == std::string::npos)
     {
-        std::memcpy(g_version, path.c_str() + at + 5, 3);
-        g_version[3] = '0';
+        Log("IOP reset with no image on the disc: the modules' version stays %.4s", g_version);
+        return;
     }
+    std::string path = reset.substr(at + 7);
+    std::vector<u8> image;
+    if (!DiscReadFile(path, image))
+    {
+        Fatal("IOP reset: the image %s isn't on the disc", path.c_str());
+    }
+    static const char id[] = "PsIIfileio  ";
+    auto found = std::search(image.begin(), image.end(), id, id + sizeof(id) - 1);
+    if (found == image.end() || image.end() - found < static_cast<long>(sizeof(id) - 1 + 4))
+    {
+        Fatal("IOP reset: the image %s has no FILEIO module's ID (\"%s\" and its version)", path.c_str(), id);
+    }
+    std::memcpy(g_version, &*found + sizeof(id) - 1, 4);
+    Log("IOP image %s: modules' version %.4s", path.c_str(), g_version);
 }
 
 void IopServe(RpcCall& c)
