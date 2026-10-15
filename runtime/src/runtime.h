@@ -150,8 +150,11 @@ u64 GsPrivRead(u32 address);
 // CSR as the guest reads it (without servicing interrupts first)
 u64 GsCsr();
 void GsPrivWrite(u32 address, u64 value);
-// The vertical blank: the GS's CSR, and the picture handed to the presenter
-void GsVblank(bool start);
+// A vertical blank's start: the GS's CSR, and the picture handed to the presenter. Only the newest of blanks taken one after
+// another gets a picture (an older one's would be replaced at once). On the game's own thread (`gameThread`) it's always
+// queued, and whether the thread is to wait for the render thread (RenderHold) is returned; on the timer thread it's dropped
+// when the render thread is two pictures behind
+bool GsVblank(bool newest, bool gameThread);
 // SetGsCrt
 void GsSetCrt(u32 interlaced, u32 mode, u32 field);
 // The presenter (on the host's main thread): waits for pictures and shows or saves them; returns when the game ends
@@ -214,8 +217,11 @@ void RenderCall(std::function<void()> work);
 // What's queued handed over; everything queued done
 void RenderFlush();
 void RenderSync();
-// A picture made on the GS's side; returns once the render thread is at most two pictures behind
-void RenderFrame(std::function<void()> show);
+// A picture made on the GS's side: always queued for the game's own thread (which then waits for the render thread with
+// RenderHold), otherwise dropped when the render thread is already two pictures behind. Whether it was queued
+bool RenderFrame(std::function<void()> show, bool always);
+// Waits until the render thread is at most two pictures behind
+void RenderHold();
 
 // --- display.cpp: the window (OpenGL) and the picture's way from the GS to it
 // The window and the GPU's contexts made (the main thread, before RenderStart): the window, or null when headless

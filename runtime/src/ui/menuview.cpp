@@ -832,19 +832,20 @@ void DrawMenus(OverlayFrame& frame, const MenuView& view, std::vector<HitRegion>
     }
 }
 
-void DrawGamePrompt(OverlayFrame& frame, const std::string& text, f32 left, f32 top, f32 width, f32 height)
+void DrawGamePrompt(OverlayFrame& frame, const std::string& text, f32 opacity, f32 left, f32 top, f32 width, f32 height)
 {
     // Near the picture's bottom, in the footer's words' look on a dark pill
     TextStyle style = Body(26.0f, White, true);
+    style.colour.a *= opacity;
     style.outline = 2.0f;
-    style.outlineColour = Hex(0x000000, 0.6f);
+    style.outlineColour = Hex(0x000000, 0.6f * opacity);
     style.dropY = 2.0f;
-    style.dropColour = Hex(0x000000);
+    style.dropColour = Hex(0x000000, opacity);
     f32 textWidth = OverlayTextWidth(text, style);
     f32 middle = top + height * 0.91f;
     f32 pillHeight = OverlayLineHeight(style) + 10.0f;
     BoxStyle pill;
-    pill.fill = Hex(0x000000, 0.5f);
+    pill.fill = Hex(0x000000, 0.5f * opacity);
     pill.radius = pillHeight * 0.5f;
     frame.Box(left + width * 0.5f - textWidth * 0.5f - 22.0f, middle - pillHeight * 0.5f, textWidth + 44.0f, pillHeight, pill);
     frame.Text(text, left + width * 0.5f, middle, style, OverlayAlign::Centre);

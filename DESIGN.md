@@ -134,6 +134,13 @@ Each EE thread is a host thread; one holds the "processor" at a time, chosen as 
 come first served, no time slicing). Interrupt handlers run on whichever host thread holds the processor, with their own
 register context and stack, or on the timer thread when every thread waits. EI/DI and COP0 Status's EIE are honoured.
 
+The vertical blank comes from the timer thread at 59.94 Hz whatever the game is doing, as the TV's does: a game counts them
+for its clock (WoC runs as many steps of play in a frame as blanks went by). Its edges (each blank's start and end) are
+counted, not flagged: a holder kept from its poll points for longer than a field takes the ones it missed one after another,
+each with its handlers, instead of as one (which slowed the game's clock down with the host). The game's thread waiting for
+the render thread (below) waits at a poll point, the timer thread running the handlers meanwhile, so the blanks reach the game
+as they come: taken late, all at once, a game's swaps at their ends would be just past and let frames through without one.
+
 ### The IOP (HLE, `iop/`)
 
 The EE side of the SIF (libkernel's sceSifInitCmd/BindRpc/CallRpc, libcdvd, the file stubs, libpad, libmc) runs recompiled
@@ -230,7 +237,9 @@ The GS's side (the GIF's paths, the GS's registers, local memory, drawing and th
 own (`render.cpp`, from the Twinsanity port's): what reaches the GIF is copied into a queue the render thread plays back in
 order, the privileged registers the PCRTC reads are answered from copies at once and set on the GS in their place in the
 queue, and SIGNAL and FINISH reach the INTC when the render thread gets to them. The queue is handed over at the end of each
-DMA transfer and whenever the game reads CSR, and the game's thread stays at most two pictures ahead. Every working thread
+DMA transfer and whenever the game reads CSR, and the game's thread stays at most two pictures (vertical blanks) ahead: it
+waits for the render thread after the blank's handlers, the blanks going on meanwhile (above), and a blank taken where no
+game thread runs drops its picture instead when the render thread is that far behind. Every working thread
 asks macOS for the performance cores: left to the default class, about a third of the time ran on the efficiency cores.
 With both, WoC's 3D scenes went from 16-20 frames a second to the full 60. `PS2_RENDER_THREAD=0` keeps the GS on the
 game's thread.
@@ -292,7 +301,8 @@ actions, going back from them goes back to the game, and the game just waits whi
   the program) baked into atlases per size with stb_truetype. The mouse's places are hit regions recorded as each frame is drawn.
 - The settings: the display's in `graphics.txt` (as before, with the new ones added), the rest and the game's own in
   `options.txt`. `--settings DIR` uses another folder (tests).
-- The game's prompt (`ps2_show_prompt`) is drawn near the picture's bottom in the menus' style while the game plays.
+- The game's prompt (`ps2_show_prompt`) is drawn near the picture's bottom in the menus' style while the game plays, fading
+  in as it's shown (a quarter of a second) and out as it's taken down (half a second); headless pictures show it as it stands.
 - `--ui S:KEY,...` drives the menus from a time of the game's: keys (esc, enter, up, down, left, right, tab, prevtab, q, e,
   back, delete, space), `mouse:XxY`/`click:XxY` in reference pixels, `wheelup`/`wheeldown`, `pad-back`, `wait`, and `shot`,
   which saves the window with the menus as `uiNN.png` in the snapshots' folder (the window's pixels; headless, a hidden

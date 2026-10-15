@@ -61,8 +61,8 @@ typedef struct Ps2GameInfo
     int ownPause;
 } Ps2GameInfo;
 
-// A prompt shown over the picture near its bottom (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down;
-// not shown while the PC menus are up. Any thread
+// A prompt shown over the picture near its bottom (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down
+// (it fades in and out); not shown while the PC menus are up. Any thread
 #ifdef __cplusplus
 extern "C"
 #endif
