@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <condition_variable>
 #include <csetjmp>
 #include <map>
@@ -1568,10 +1569,15 @@ extern "C" void ps2_syscall(Ps2Cpu* c, u32 pc)
     case 0x48:
         SysReferSema(c);
         break;
-    case 0x4B: // GetOsdConfigParam: English, 4:3, ...
+    case 0x4B: // GetOsdConfigParam: English (language, bits 16-20), 4:3, and the Mac's time zone (its offset from GMT in
+               // minutes, bits 21-31, daylight saving included), which games add to the clock's GMT (the cdvd's ReadClock)
         if (Arg(c, 0) != 0)
         {
-            Write32(Arg(c, 0), 1u << 16);
+            time_t now = time(nullptr);
+            struct tm local;
+            localtime_r(&now, &local);
+            s32 offset = static_cast<s32>(local.tm_gmtoff / 60);
+            Write32(Arg(c, 0), (1u << 16) | ((static_cast<u32>(offset) & 0x7FF) << 21));
         }
         Ret(c, 0);
         break;

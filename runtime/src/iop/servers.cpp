@@ -4,6 +4,7 @@
 #include "iop.h"
 #include "ps2/sound.h"
 
+#include <ctime>
 #include <map>
 
 namespace Ps2
@@ -544,6 +545,22 @@ void Cdvd(RpcCall& c)
     case 0x80000593: // S commands
         switch (c.fno)
         {
+        case 0x01: // ReadClock: the result, then the clock (status, seconds, minutes, hours, a pad, day, month, year: BCD) as
+                   // a console's keeps it, in Japan's time (GMT+9); games make it local with the time zone GetOsdConfigParam
+                   // gives (the Mac's)
+        {
+            time_t japan = time(nullptr) + 9 * 3600;
+            struct tm t;
+            gmtime_r(&japan, &t);
+            auto bcd = [](int v) { return static_cast<u8>(((v / 10) << 4) | (v % 10)); };
+            u8 clock[8] = {0, bcd(t.tm_sec), bcd(t.tm_min), bcd(t.tm_hour), 0, bcd(t.tm_mday), bcd(t.tm_mon + 1),
+                           bcd(t.tm_year % 100)};
+            c.Out32(0, 1);
+            c.Out32(4, 0);
+            c.Out32(8, 0);
+            std::memcpy(&c.out[4], clock, 8);
+            return;
+        }
         case 0x03: // disk type: a PlayStation 2 DVD (SCECdPS2DVD) or CD (SCECdPS2CD)
             c.Out32(0, DiscIsDvd() ? 0x14 : 0x12);
             return;
