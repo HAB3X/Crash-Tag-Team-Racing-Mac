@@ -48,17 +48,14 @@ add_library(ps2runtime STATIC
     runtime/src/memory.cpp
     runtime/src/render.cpp
     runtime/src/mmi.c
-<<<<<<< HEAD
     runtime/src/iop/dbcman.cpp
     runtime/src/iop/ds2.cpp
     runtime/src/iop/mc2.cpp
-=======
     runtime/src/ipu/bitstream.cpp
     runtime/src/ipu/colour.cpp
     runtime/src/ipu/ipu.cpp
     runtime/src/ipu/mpeg.cpp
     runtime/src/ipu/vlc.cpp
->>>>>>> biohazard-ipu
     runtime/src/iop/sif.cpp
     runtime/src/iop/cri_adx.cpp
     runtime/src/iop/cri_psm.cpp
