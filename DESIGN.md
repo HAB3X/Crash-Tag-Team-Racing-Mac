@@ -219,6 +219,14 @@ each frame over the effect's buffers read back first. The views are decoded whol
 decode made when its batch began, and an upload over pages the GPU holds newer is put into memory's copy on the GPU
 (`MergeWrites`) instead of read back; Arctic Antics went from 11 frames a second to 60.
 
+CTTR's park (a 30 frames a second game there: its frame sync waits for a second vblank in that mode, 60 in its menus) drew
+at 13. Its shadow volumes count into a 16 bit buffer with a wrapping additive blend that writes the alpha bit (0): summed
+like WoC's, which don't write it, instead of a copy of the target and two render passes for each of ~400 batches a frame
+(24 frames a second). Its glow reads the buffer it draws into as 8 bit texels through a texture's region repeat (about
+1,000 channel-shuffle sprites) and adds it to the frame with a region clamp: the shader wraps each texel and filters as
+the GS does (`RegionSample`), where the software GS drew them with about ten GPU readbacks a frame (28 frames a second).
+Both left every picture the same, the glow's buffer too, at 1x and 3x (`--gs-replay` of the park, below).
+
 A game that draws each field of an interlaced picture on its own (SMODE2's INT and FFMD; WoC does) moves its drawing half a
 line on every other field with XYOFFSET (the SDK's sceGsSetHalfOffset), for a TV that shows the fields half a line apart.
 Shown one field after another in the same place, the picture shook by half a line at 30 Hz: the GS drops that half line
@@ -248,7 +256,10 @@ rest. The results are the interpreter's bit for bit: `PS2_VU1=verify` runs both 
 translated where the translation's sticky bits are the interpreter's, `Sim.ready_for`). A game whose programs are bare code
 that its own DMA chains upload (CTTR: REF tags into `.vutext`) names them in its config (`[vu1] programs`: each one's EE
 addresses and the micro address it's uploaded at): CTTR's ten, 3,961 instructions, about 98% of those run translated in its
-park (10 frames a second to 30). FCSET is translated (its clip flag through the FMAC pipeline, as CLIP's).
+park (10 frames a second to 30). FCSET is translated (its clip flag through the FMAC pipeline, as CLIP's), and a branch with
+the E bit (the run ends after its delay slot; the next starts where it branched, an entry of its own). A block has up to 64
+variants: CTTR's main program's loops settle at 49 pipeline states, and with 32 the rest ran interpreted (its park's
+instructions 98.5% translated then, 99.3% now).
 
 ### Controllers and memory cards
 
