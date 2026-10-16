@@ -48,8 +48,21 @@ u32 SdBlockTransStatus(s32 core);
 // area cleared, 0x200 to clear it through DMA channel 1), depths, and the echo and delay presets' delay and feedback. The
 // presets are the game's LIBSD.IRX's own tables (none: only the depths are set, and it's logged). Returns libsd's result
 s32 SdSetEffectAttr(s32 core, u32 mode, u16 depthLeft, u16 depthRight, u32 delay, u32 feedback);
+// sceSdGetEffectAttr: a core's reverb as sceSdSetEffectAttr left it (its preset, delay and feedback) and its depths' registers
+struct SdEffectAttr
+{
+    u32 mode;
+    u16 depthLeft;
+    u16 depthRight;
+    u32 delay;
+    u32 feedback;
+};
+SdEffectAttr SdGetEffectAttr(s32 core);
 // sceSdClearEffectWorkArea: a preset's work area zeroed below the core's end address (EEA)
 s32 SdClearEffectWorkArea(s32 core, s32 channel, u32 mode);
+// sceSdNote2Pitch: the pitch register's value playing a note (and fine tune, 1/128 of a semitone) of a sample recorded at a
+// centre note (and fine tune) at 48 kHz. Its tables are the game's LIBSD.IRX's, taken from the module as it's loaded
+u16 SdNote2Pitch(u16 centreNote, u16 centreFine, u16 note, s16 fine);
 
 // The disc (any thread): a file by its path ("\\SFX.DAT" or "/SFX.DAT"), its first sector and size; sectors of 2048 bytes
 bool DiscFind(const std::string& path, u32& lsn, u32& size);
