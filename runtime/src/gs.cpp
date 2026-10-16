@@ -10,6 +10,7 @@
 #include "../../hw/gs/gs.h"
 #include "../../hw/png.h"
 #include "ui/menus.h"
+#include "sound/spu2.h"
 
 #include <SDL3/SDL.h>
 
@@ -514,6 +515,9 @@ void PresenterRun()
             Log("ran %.0f s: stopping", t);
 #ifdef PS2_TRACE_ENTER
             TraceEnterDump();
+            // The SPU2's two cores' state (core 0 voice 0, core 1 voice 0): attributes, mixes, master volumes
+            Spu2::LogVoice(0);
+            Spu2::LogVoice(24);
 #endif
             const Ee::Vu1TranslationStats& vs = Ee::GetVu1TranslationStats();
             Log("VU1: %llu instructions translated, %llu interpreted%s", static_cast<unsigned long long>(vs.translatedInstructions),
