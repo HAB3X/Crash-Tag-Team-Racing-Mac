@@ -69,6 +69,9 @@ void IopSendCommand(u32 cid, std::vector<u8> packet, u32 eeAddress = 0, const vo
 // known by its name (the module's own, in its .iopmod section: "RAD_IOP_SIDE"): start runs with its arguments as it's loaded
 using IopModuleStart = std::function<void(const std::vector<std::string>& args)>;
 void IopRegisterModule(const char* name, IopModuleStart start);
+// A module of the game's own with no name of its own (an empty .iopmod name), known instead by a string in its image (its
+// version banner, say)
+void IopRegisterUnnamedModule(const char* text, IopModuleStart start);
 
 // A module's thread that runs once a vertical blank (its loop round WaitVblankStart or WaitVblankEnd): the handler runs on the
 // game's side as each blank begins, between the game's instructions, so it may read and write the EE's memory as the IOP's DMA
@@ -85,5 +88,8 @@ bool IopFree(u32 at);
 void KernelSignalSema(int id);
 u8* EeMemory(u32 address);
 void Log(const char* format, ...) __attribute__((format(printf, 1, 2)));
+[[noreturn]] void Fatal(const char* format, ...) __attribute__((format(printf, 1, 2)));
 bool Once(const std::string& key);
+// Whether --log asked for the IOP's detail (a module's own, logged only then)
+bool IopLogging();
 }

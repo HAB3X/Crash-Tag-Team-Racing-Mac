@@ -31,6 +31,12 @@ std::map<std::string, IopModuleStart>& GameModules()
     static std::map<std::string, IopModuleStart> m;
     return m;
 }
+// The game's modules with no name of their own (IopRegisterUnnamedModule), by a string in their image
+std::vector<std::pair<std::string, IopModuleStart>>& UnnamedModules()
+{
+    static std::vector<std::pair<std::string, IopModuleStart>> m;
+    return m;
+}
 // The modules' vertical blank handlers (IopOnVblank), in the order they were added
 std::vector<std::function<void()>> g_vblankHandlers;
 
@@ -149,12 +155,27 @@ std::string ModuleName(const u8* elf, size_t size)
     return "";
 }
 
+// An IOP module's bytes: to the end of its section headers (the last thing an IRX's file has), within size
+size_t ModuleExtent(const u8* elf, size_t size)
+{
+    if (size < 52 || std::memcmp(elf, "\x7f" "ELF", 4) != 0)
+    {
+        return 0;
+    }
+    u32 shoff;
+    u16 shentsize, shnum;
+    std::memcpy(&shoff, elf + 32, 4);
+    std::memcpy(&shentsize, elf + 46, 2);
+    std::memcpy(&shnum, elf + 48, 2);
+    return std::min<size_t>(size, static_cast<size_t>(shoff) + static_cast<size_t>(shentsize) * shnum);
+}
+
 // LIBSD.IRX's name for itself: its reverb presets are libsd's (sound/libsd.cpp)
 const char* const LibsdName = "Sound_Device_Library";
 
-// A module loaded: its ID, and the game's own module of that name started with the arguments (arg_len bytes, each ending
-// with a zero)
-int ModuleLoaded(const std::string& name, const RpcCall& c, u32 argLength)
+// A module loaded: its ID, and the game's own module of that name (or, with none, known by a string in its image) started
+// with the arguments (arg_len bytes, each ending with a zero)
+int ModuleLoaded(const std::string& name, const RpcCall& c, u32 argLength, const u8* image, size_t imageSize)
 {
     std::vector<std::string> args;
     std::string arg;
@@ -173,12 +194,29 @@ int ModuleLoaded(const std::string& name, const RpcCall& c, u32 argLength)
     }
     int id = g_nextModule++;
     g_modules[id] = name;
-    auto it = GameModules().find(name);
-    Log("IOP: module %s loaded: id %d%s", name.empty() ? "(unnamed)" : name.c_str(), id,
-        it != GameModules().end() ? ", the game's" : "");
-    if (it != GameModules().end())
+    const IopModuleStart* start = nullptr;
+    std::string known = name;
+    if (auto it = GameModules().find(name); !name.empty() && it != GameModules().end())
     {
-        it->second(args);
+        start = &it->second;
+    }
+    else if (name.empty())
+    {
+        size_t extent = ModuleExtent(image, imageSize);
+        for (const auto& [text, unnamedStart] : UnnamedModules())
+        {
+            if (std::search(image, image + extent, text.begin(), text.end()) != image + extent)
+            {
+                start = &unnamedStart;
+                known = "\"" + text + "\"";
+                break;
+            }
+        }
+    }
+    Log("IOP: module %s loaded: id %d%s", known.empty() ? "(unnamed)" : known.c_str(), id, start != nullptr ? ", the game's" : "");
+    if (start != nullptr)
+    {
+        (*start)(args);
     }
     return id;
 }
@@ -203,6 +241,9 @@ void LoadFile(RpcCall& c)
         {
             // The console's own modules: named by their file
             name = path.substr(5);
+            c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(0), nullptr, 0)));
+            c.Out32(4, 0);
+            return;
         }
         else if (DiscFind(DiscPath(path), lsn, size))
         {
@@ -213,16 +254,13 @@ void LoadFile(RpcCall& c)
             {
                 SdModuleLoaded(elf.data(), size);
             }
-        }
-        else
-        {
-            Log("IOP: load module %s: no such file", path.c_str());
-            c.Out32(0, static_cast<u32>(-203)); // KE_NOFILE
+            PS2_LOG(LogIop, "IOP: load module %s", path.c_str());
+            c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(0), elf.data(), size)));
+            c.Out32(4, 0);
             return;
         }
-        PS2_LOG(LogIop, "IOP: load module %s", path.c_str());
-        c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(0))));
-        c.Out32(4, 0);
+        Log("IOP: load module %s: no such file", path.c_str());
+        c.Out32(0, static_cast<u32>(-203)); // KE_NOFILE
         return;
     }
     case 6:
@@ -233,7 +271,7 @@ void LoadFile(RpcCall& c)
         {
             SdModuleLoaded(IopMem() + at, IopRamSize - at);
         }
-        c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(4))));
+        c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(4), IopMem() + at, IopRamSize - at)));
         c.Out32(4, 0);
         return;
     }
@@ -614,6 +652,8 @@ void IopRegisterServer(u32 sid, const char* name, RpcServer server) { Registry()
 
 void IopRegisterModule(const char* name, IopModuleStart start) { GameModules()[name] = std::move(start); }
 
+void IopRegisterUnnamedModule(const char* text, IopModuleStart start) { UnnamedModules().emplace_back(text, std::move(start)); }
+
 void IopOnVblank(std::function<void()> handler) { g_vblankHandlers.push_back(std::move(handler)); }
 
 void IopVblank()
@@ -627,6 +667,8 @@ void IopVblank()
 u8* IopMemory(u32 address) { return IopMem() + (address & (IopRamSize - 1)); }
 
 u8* EeMemory(u32 address) { return Host(address & 0x1FFFFFFF); }
+
+bool IopLogging() { return (g_logMask & LogIop) != 0; }
 
 const char* IopServerName(u32 sid)
 {

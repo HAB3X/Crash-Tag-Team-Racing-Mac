@@ -259,6 +259,18 @@ struct EffectTables
 };
 EffectTables g_effects;
 
+// sceSdNote2Pitch's tables (LIBSD.IRX's .data: 0x5170 and 0x5188 in SDK 2.8's): a semitone's step from 0x8000 for the twelve
+// of an octave, and a fine tune's (1/128 semitone) for the 128 of a semitone, found by their first entries
+constexpr u16 SemitoneStart[4] = {0x8000, 0x879C, 0x8FAC, 0x9837};
+constexpr u16 FineStart[4] = {0x8000, 0x800E, 0x801D, 0x802C};
+struct PitchTables
+{
+    bool found = false;
+    u16 semitones[12] = {};
+    u16 fines[128] = {};
+};
+PitchTables g_pitch;
+
 // Each core's preset, delay and feedback, as libsd keeps them
 struct EffectState
 {
@@ -310,6 +322,41 @@ void WriteEffectField(s32 core, u32 field, u16 value)
 }
 }
 
+namespace
+{
+// The tables sceSdNote2Pitch reads: the twelve semitones' steps, then (right after them, as in the module) the 128 fine tunes'
+void FindPitchTables(const u8* data, size_t size)
+{
+    auto at = [&](const u16* start) -> size_t {
+        for (size_t o = 0; o + 8 <= size; o += 2)
+        {
+            if (Get16(data + o) == start[0] && Get16(data + o + 2) == start[1] && Get16(data + o + 4) == start[2] &&
+                Get16(data + o + 6) == start[3])
+            {
+                return o;
+            }
+        }
+        return size;
+    };
+    size_t semitones = at(SemitoneStart), fines = at(FineStart);
+    if (semitones + 24 > size || fines + 256 > size)
+    {
+        Log("libsd: LIBSD.IRX's pitch tables not found: sceSdNote2Pitch can't be done");
+        return;
+    }
+    auto lock = SoundLock();
+    for (u32 i = 0; i < 12; i++)
+    {
+        g_pitch.semitones[i] = Get16(data + semitones + i * 2);
+    }
+    for (u32 i = 0; i < 128; i++)
+    {
+        g_pitch.fines[i] = Get16(data + fines + i * 2);
+    }
+    g_pitch.found = true;
+}
+}
+
 void SdModuleLoaded(const u8* elf, size_t size)
 {
     if (size < 52 || Get32(elf) != 0x464C457F)
@@ -340,6 +387,7 @@ void SdModuleLoaded(const u8* elf, size_t size)
         }
         break;
     }
+    FindPitchTables(data, dataSize);
     if (found.size() != 1)
     {
         Log("libsd: LIBSD.IRX's reverb presets %s: the reverb presets stay off", found.empty() ? "not found" : "found twice");
@@ -455,5 +503,56 @@ s32 SdSetEffectAttr(s32 core, u32 mode, u16 depthLeft, u16 depthRight, u32 delay
         Write(0x19A + c, static_cast<u16>(Read(0x19A + c) | 0x80));
     }
     return result;
+}
+
+// sceSdGetEffectAttr (export 24, 0xBBC in SDK 2.8's LIBSD.IRX): the mode, delay and feedback kept by sceSdSetEffectAttr, the
+// depths read back from EVOL
+SdEffectAttr SdGetEffectAttr(s32 core)
+{
+    core &= 1;
+    const EffectState& state = g_effectState[core];
+    return {state.mode, Read(0x764 + static_cast<u32>(core) * 0x28), Read(0x766 + static_cast<u32>(core) * 0x28), state.delay,
+            state.feedback};
+}
+
+// sceSdNote2Pitch (export 13, 0x3890 in SDK 2.8's LIBSD.IRX): the octaves from the centre note as a shift (four octaves up from
+// the table's 0x8000 at the centre is 0x4000 << 2...), the semitone and the fine tune as the tables' product, as the module
+// rounds them: a negative fine borrows from the semitone below
+u16 SdNote2Pitch(u16 centreNote, u16 centreFine, u16 note, s16 fine)
+{
+    if (!g_pitch.found)
+    {
+        Fatal("libsd: sceSdNote2Pitch without LIBSD.IRX's pitch tables");
+    }
+    s32 f = fine + centreFine;
+    s32 carry = f / 128;
+    f -= carry * 128;
+    s16 n = static_cast<s16>(note + carry - centreNote);
+    s32 octave = n / 12;
+    s32 shift = octave - 2;
+    s32 semitone = n - octave * 12;
+    if (semitone < 0 || (semitone == 0 && f < 0))
+    {
+        semitone += 12;
+        shift = octave - 3;
+    }
+    if (f < 0)
+    {
+        semitone = semitone - 1 + carry;
+        f += (carry + 1) * 128;
+    }
+    if (semitone < 0 || semitone >= 12 || f < 0 || f >= 128)
+    {
+        // The module would read outside its tables
+        Fatal("libsd: sceSdNote2Pitch(%u, %u, %u, %d) out of its tables (semitone %d, fine %d)", centreNote, centreFine, note,
+              fine, semitone, f);
+    }
+    u32 pitch = (static_cast<u32>(g_pitch.semitones[semitone]) * g_pitch.fines[f]) >> 16;
+    s16 s = static_cast<s16>(shift);
+    if (s < 0)
+    {
+        pitch = (pitch + (1u << (-s - 1))) >> -s;
+    }
+    return static_cast<u16>(pitch);
 }
 }
