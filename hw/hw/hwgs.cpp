@@ -180,6 +180,72 @@ struct Rect
     s32 bottom;
 };
 
+// A primitive of a batch the shader blends: the pixels it can draw in and, for a triangle, its corners (the GS's 12.4 fixed
+// point, relative to the drawing offset)
+struct BatchShape
+{
+    Rect rect;
+    bool triangle;
+    s32 x[3];
+    s32 y[3];
+};
+
+// Whether a triangle's edge keeps the other triangle's pixels out: every corner of the other one is on its outer side, or on the
+// edge's line only where it is one of the edge's own ends (a mesh's triangles share edges, and rasterise those without a pixel
+// in both), else a quarter pixel (4 units) clear of it, far past the GPU's snapping of corners
+bool EdgeSeparates(const BatchShape& a, u32 from, u32 to, const BatchShape& b, s64 orientation)
+{
+    const s64 ex = a.x[to] - a.x[from];
+    const s64 ey = a.y[to] - a.y[from];
+    const s64 length2 = ex * ex + ey * ey;
+    for (u32 i = 0; i < 3; i++)
+    {
+        const s64 side = (ex * (b.y[i] - a.y[from]) - ey * (b.x[i] - a.x[from])) * orientation;
+        const bool onEnd = (b.x[i] == a.x[from] && b.y[i] == a.y[from]) || (b.x[i] == a.x[to] && b.y[i] == a.y[to]);
+        if (!(side < 0 && side * side >= length2 * 16) && !onEnd)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ShapesOverlap(const BatchShape& a, const BatchShape& b)
+{
+    if (a.rect.left > b.rect.right || b.rect.left > a.rect.right || a.rect.top > b.rect.bottom || b.rect.top > a.rect.bottom)
+    {
+        return false;
+    }
+
+    if (!a.triangle || !b.triangle)
+    {
+        return true;
+    }
+
+    // Two triangles (convex) share no pixel when an edge of either has the other wholly outside it
+    for (u32 side = 0; side < 2; side++)
+    {
+        const BatchShape& t = side == 0 ? a : b;
+        const BatchShape& o = side == 0 ? b : a;
+        const s64 area = static_cast<s64>(t.x[1] - t.x[0]) * (t.y[2] - t.y[0]) - static_cast<s64>(t.y[1] - t.y[0]) * (t.x[2] - t.x[0]);
+        if (area == 0)
+        {
+            return true;
+        }
+
+        for (u32 e = 0; e < 3; e++)
+        {
+            if (EdgeSeparates(t, e, (e + 1) % 3, o, area > 0 ? 1 : -1))
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 struct Target
 {
     u32 bp = 0;
@@ -1419,9 +1485,9 @@ private:
     BatchKey key_ = {};
     bool batching_ = false;
     std::vector<HwVertex> vertexes_;
-    // A batch blended by the shader: its primitives' rectangles (one overlapping an earlier one starts a new batch, as the
-    // destination copy is from before the batch)
-    std::vector<Rect> batchRects_;
+    // A batch blended by the shader: its primitives' shapes (one that can draw a pixel an earlier one can starts a new batch, as
+    // the destination copy is from before the batch)
+    std::vector<BatchShape> batchShapes_;
     // Stencil buffers for the destination alpha test of draws without a depth buffer, by colour target
     std::map<Target*, std::unique_ptr<Target>> scratchStencils_;
     GLuint dateProgram_ = 0;
@@ -5187,11 +5253,22 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         Flush();
     }
 
+    BatchShape shape = {rect, false, {}, {}};
+    if (count == 3 && (state.type == Gs::PrimTriangle || state.type == Gs::PrimTriangleStrip || state.type == Gs::PrimTriangleFan))
+    {
+        shape.triangle = true;
+        for (u32 i = 0; i < 3; i++)
+        {
+            shape.x[i] = static_cast<s32>(vertexes[i].x) - state.offsetX;
+            shape.y[i] = static_cast<s32>(vertexes[i].y) - state.offsetY;
+        }
+    }
+
     if (batching_ && shaderBlend)
     {
-        for (const Rect& earlier : batchRects_)
+        for (const BatchShape& earlier : batchShapes_)
         {
-            if (rect.left <= earlier.right && earlier.left <= rect.right && rect.top <= earlier.bottom && earlier.top <= rect.bottom)
+            if (ShapesOverlap(shape, earlier))
             {
                 Flush();
                 break;
@@ -5229,7 +5306,7 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
     batching_ = true;
     if (shaderBlend)
     {
-        batchRects_.push_back(rect);
+        batchShapes_.push_back(shape);
     }
 
     // The vertexes
@@ -5406,7 +5483,7 @@ void HwGs::Flush()
     {
         batching_ = false;
         vertexes_.clear();
-        batchRects_.clear();
+        batchShapes_.clear();
         return;
     }
 
@@ -5438,8 +5515,9 @@ void HwGs::Flush()
     {
         // The shader's blend reads the batch's rectangle; the stencil's pass the whole scissor
         Rect region = {0x7FFF, 0x7FFF, -1, -1};
-        for (const Rect& r : batchRects_)
+        for (const BatchShape& shape : batchShapes_)
         {
+            const Rect& r = shape.rect;
             region.left = std::min(region.left, r.left);
             region.top = std::min(region.top, r.top);
             region.right = std::max(region.right, r.right);
@@ -5777,7 +5855,7 @@ void HwGs::Flush()
     }
 
     vertexes_.clear();
-    batchRects_.clear();
+    batchShapes_.clear();
     batching_ = false;
 }
 

@@ -76,8 +76,9 @@ static uint32_t g_enterCounts[1u << 23];
 
 uint32_t ps2_watch_low = 0xFFFFFFFFu, ps2_watch_size = 0;
 static int g_watchCount = 0;
-// $PS2_TRACE_WATCH_SKIP=N: the first N stores are not logged (a start-up clearing the range would use up the 40)
-static int g_watchSkip = -1;
+// $PS2_TRACE_WATCH_SKIP=N: the first N stores are not logged (a start-up clearing the range would use up the 40);
+// $PS2_TRACE_WATCH_MAX=N: log N stores (40)
+static int g_watchSkip = -1, g_watchMax = 40;
 
 void ps2_trace_store(uint32_t address, uint64_t value, int bytes)
 {
@@ -85,13 +86,17 @@ void ps2_trace_store(uint32_t address, uint64_t value, int bytes)
     {
         const char* skip = getenv("PS2_TRACE_WATCH_SKIP");
         g_watchSkip = skip ? atoi(skip) : 0;
+        if (const char* max = getenv("PS2_TRACE_WATCH_MAX"))
+        {
+            g_watchMax = atoi(max);
+        }
     }
     if (g_watchSkip > 0)
     {
         g_watchSkip--;
         return;
     }
-    if (g_watchCount++ < 40)
+    if (g_watchCount++ < g_watchMax)
     {
         Ps2::Log("store %d bytes to %08x = %llx", bytes, address, static_cast<unsigned long long>(value));
         Ps2::Backtrace();
