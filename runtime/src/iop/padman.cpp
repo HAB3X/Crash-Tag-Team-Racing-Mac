@@ -9,7 +9,9 @@
 // request's state (113), the pad's task (114), and the pressure buttons' mask (121-124).
 #include "iop.h"
 
-#include <atomic>
+#include <algorithm>
+#include <deque>
+#include <mutex>
 
 namespace Ps2
 {
@@ -48,8 +50,6 @@ struct Port
 };
 
 Port g_ports[2];
-std::atomic<u32> g_pressed[2];   // PS2 button bits, 1 = pressed
-std::atomic<u32> g_sticks[2] = {0x80808080u, 0x80808080u}; // right x, right y, left x, left y (centred: 0x80)
 
 bool Connected(u32 port) { return port == 0; }
 
@@ -220,10 +220,125 @@ void PadVblank()
     }
 }
 
+// A press shorter than the game's frame can fall between its reads (the newest frame PADMAN writes is what the game reads, once a
+// frame of its own). So each press (a button, or a stick pushed off centre: its eight directions count as buttons 16-23) is
+// shown to the game for whole game frames: until it has flipped twice and at least 3 vertical blanks passed (at most 30, for a
+// game that isn't flipping: loading). Presses are shown in the order they came: one that comes while the last of its button is
+// still shown waits, and the button is shown released for a game frame between them; ps2_set_tap_spacing makes every press
+// wait for the one before it too (in game frames, or 3 vertical blanks to each when the game isn't flipping). A key held longer is shown as long as it's held
+constexpr int PadBits = 24;
+constexpr size_t PadQueueMax = 32;
+const char* const PadBitNames[16] = {"select", "l3", "r3", "start", "up", "right", "down", "left",
+                                     "l2", "r2", "l1", "r1", "triangle", "circle", "cross", "square"};
+
+struct Slot
+{
+    enum Phase : u8 { Idle, Shown, Gap } phase = Idle;
+    u64 flipEnd = 0, vblankEnd = 0, vblankCap = 0;
+};
+
+struct Latch
+{
+    std::mutex lock;
+    u32 down = 0;        // what the presenter said was down at its last update
+    u32 delivered = 0;   // what the last frame showed
+    u8 axes[4] = {0x80, 0x80, 0x80, 0x80}; // the sticks now (right x, right y, left x, left y)
+    u8 lastAxes[4] = {0x80, 0x80, 0x80, 0x80}; // each one's last value off centre
+    u64 vblank = 0;
+    u64 spacing = 0;   // game frames between one press's start and the next's (ps2_set_tap_spacing)
+    u64 nextFlip = 0, nextVblank = 0; // when the next press may start: at that flip, or that vertical blank if the game isn't flipping
+    Slot slots[PadBits];
+    std::deque<int> waiting; // the presses not yet shown, by button, in order
+    u64 seen = 0, shown = 0; // presses taken from the presenter, and presses shown in frames (--log input)
+} g_latch[2];
+
+void Begin(Slot& s, Slot::Phase phase, u64 flips, u64 vblank, u64 minFlips, u64 minBlanks, u64 cap)
+{
+    s.phase = phase;
+    s.flipEnd = flips + minFlips;
+    s.vblankEnd = vblank + minBlanks;
+    s.vblankCap = vblank + cap;
+}
+
+bool Over(const Slot& s, u64 flips, u64 vblank) { return vblank >= s.vblankCap || (flips >= s.flipEnd && vblank >= s.vblankEnd); }
+
+// The waiting presses that can start now, in order: the first that can't (its button is still shown, or the spacing hasn't
+// passed) holds the rest back
+void StartWaiting(Latch& l, u64 flips)
+{
+    while (!l.waiting.empty() && (flips >= l.nextFlip || l.vblank >= l.nextVblank) &&
+           l.slots[l.waiting.front()].phase == Slot::Idle)
+    {
+        Begin(l.slots[l.waiting.front()], Slot::Shown, flips, l.vblank, 2, 3, 30);
+        l.waiting.pop_front();
+        l.nextFlip = flips + l.spacing;
+        l.nextVblank = l.vblank + 3 * l.spacing;
+    }
+}
+
+const char* BitName(int bit)
+{
+    static const char* const sticks[8] = {"right x-", "right x+", "right y-", "right y+",
+                                          "left x-",  "left x+",  "left y-",  "left y+"};
+    return bit < 16 ? PadBitNames[bit] : sticks[bit - 16];
+}
+
 void PadDualShock2Report(u32 port, u8 report[18])
 {
-    u32 pressed = g_pressed[port].load();
-    u32 sticks = g_sticks[port].load();
+    Latch& l = g_latch[port];
+    std::lock_guard<std::mutex> lock(l.lock);
+    u64 vblank = ++l.vblank, flips = GameFrames();
+    for (int b = 0; b < PadBits; b++)
+    {
+        Slot& s = l.slots[b];
+        if (s.phase != Slot::Idle && Over(s, flips, vblank))
+        {
+            bool again = std::find(l.waiting.begin(), l.waiting.end(), b) != l.waiting.end();
+            if (s.phase == Slot::Shown && again)
+            {
+                Begin(s, Slot::Gap, flips, vblank, 1, 2, 20);
+            }
+            else
+            {
+                s.phase = Slot::Idle;
+            }
+        }
+    }
+    StartWaiting(l, flips);
+    u32 shown = 0, waiting = 0;
+    for (int b : l.waiting)
+    {
+        waiting |= 1u << b;
+    }
+    for (int b = 0; b < PadBits; b++)
+    {
+        Slot& s = l.slots[b];
+        // A key held on after its press was shown stays shown (a press still waiting isn't held yet)
+        if (s.phase == Slot::Shown || (s.phase == Slot::Idle && ((l.down & ~waiting) >> b) & 1))
+        {
+            shown |= 1u << b;
+        }
+    }
+    u32 rising = shown & ~l.delivered;
+    for (int b = 0; b < PadBits; b++)
+    {
+        if ((rising >> b) & 1)
+        {
+            l.shown++;
+            PS2_LOG(LogInput, "input: %s shown in frame %llu (press %llu seen, %llu shown)", BitName(b),
+                    static_cast<unsigned long long>(vblank), static_cast<unsigned long long>(l.seen),
+                    static_cast<unsigned long long>(l.shown));
+        }
+    }
+    l.delivered = shown;
+    u8 axes[4];
+    for (int i = 0; i < 4; i++)
+    {
+        axes[i] = ((shown >> (16 + 2 * i)) & 3) == 0 ? 0x80 : l.axes[i] != 0x80 ? l.axes[i] : l.lastAxes[i];
+    }
+    u32 sticks;
+    std::memcpy(&sticks, axes, 4);
+    u32 pressed = shown & 0xFFFF;
     u16 buttons = static_cast<u16>(~pressed);
     std::memcpy(report, &buttons, 2);
     std::memcpy(report + 2, &sticks, 4);
@@ -237,12 +352,49 @@ void PadDualShock2Report(u32 port, u8 report[18])
 
 void PadSetInput(u32 port, u32 pressed, const u8 sticks[4])
 {
-    if (port < 2)
+    if (port >= 2)
     {
-        u32 s;
-        std::memcpy(&s, sticks, 4);
-        g_pressed[port] = pressed & 0xFFFF;
-        g_sticks[port] = s;
+        return;
     }
+    Latch& l = g_latch[port];
+    std::lock_guard<std::mutex> lock(l.lock);
+    u32 now = pressed & 0xFFFF;
+    for (int i = 0; i < 4; i++)
+    {
+        l.axes[i] = sticks[i];
+        if (sticks[i] != 0x80)
+        {
+            l.lastAxes[i] = sticks[i];
+            now |= 1u << (16 + 2 * i + (sticks[i] > 0x80 ? 1 : 0));
+        }
+    }
+    u32 rising = now & ~l.down;
+    l.down = now;
+    for (int b = 0; b < PadBits; b++)
+    {
+        if (!((rising >> b) & 1))
+        {
+            continue;
+        }
+        l.seen++;
+        if (l.waiting.size() >= PadQueueMax)
+        {
+            Log("input: %zu presses waiting: %s's dropped", l.waiting.size(), BitName(b));
+            continue;
+        }
+        l.waiting.push_back(b);
+    }
+    StartWaiting(l, GameFrames());
 }
+
+void PadSetTapSpacing(u32 vblanks)
+{
+    std::lock_guard<std::mutex> lock(g_latch[0].lock);
+    g_latch[0].spacing = vblanks;
 }
+
+u64 PadPressesSeen() { return g_latch[0].seen; }
+u64 PadPressesShown() { return g_latch[0].shown; }
+}
+
+extern "C" void ps2_set_tap_spacing(int vblanks) { Ps2::PadSetTapSpacing(static_cast<u32>(std::max(vblanks, 0))); }

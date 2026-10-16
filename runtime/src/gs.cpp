@@ -281,6 +281,8 @@ void GsSetCrt(u32 interlaced, u32 mode, u32 field)
 static std::mutex g_liveSnapLock;
 static std::vector<std::string> g_liveSnaps;
 
+u64 GameFrames() { return g_frames.load(); }
+
 void GsLiveSnapshot(const std::string& name)
 {
     std::lock_guard<std::mutex> lock(g_liveSnapLock);

@@ -97,7 +97,7 @@ u32 ParseLog(const std::string& list)
         u32 bit;
     } names[] = {{"kernel", LogKernel}, {"syscall", LogSyscall}, {"io", LogIo},   {"dma", LogDma},
                  {"sif", LogSif},       {"iop", LogIop},         {"gs", LogGs},   {"call", LogCall},
-                 {"thread", LogThread}, {"irq", LogIrq},         {"ipu", LogIpu}, {"all", 0xFFFFFFFF}};
+                 {"thread", LogThread}, {"irq", LogIrq},         {"ipu", LogIpu}, {"input", LogInput}, {"all", 0xFFFFFFFF}};
     u32 mask = 0;
     size_t start = 0;
     while (start <= list.size())
