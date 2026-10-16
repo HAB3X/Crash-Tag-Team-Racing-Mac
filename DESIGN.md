@@ -142,7 +142,10 @@ The EE kernel's syscalls are done in C++: threads (Create/Start/Exit/Terminate/D
 priorities, RotateThreadReadyQueue, ReferThreadStatus), semaphores, INTC and DMAC handlers (add, remove, enable), alarms,
 SetupThread/SetupHeap/EndOfHeap (the C runtime's start-up), SetGsCrt, GsGetIMR/GsPutIMR, SetVSyncFlag, the SIF's DMA and
 registers, SetSyscall (libkernel's own syscall handlers run as guest code), and the info calls. Unknown syscalls log once and
-return 0.
+return 0. Calls that name a thread answer as the kernel does: Start/Terminate/Delete/Suspend/Resume/Wakeup/ReleaseWait return the
+thread's id, RotateThreadReadyQueue the priority, ChangeThreadPriority the old one, and a suspended thread's ReferThreadStatus
+status is THS_SUSPEND (8) or THS_WAITSUSPEND (0xC), not READY or WAIT with a suspend bit: libraries compare these
+(CRI's SVM wakes its level 6 thread, where Sofdec's decoder runs, only if ResumeThread answered the thread's id).
 
 Each EE thread is a host thread; one holds the "processor" at a time, chosen as the EE kernel chooses (highest priority, first
 come first served, no time slicing). Interrupt handlers run on whichever host thread holds the processor, with their own
@@ -473,11 +476,29 @@ saves the pictures `--snapshot-at`/`--snapshot-every` name by the recording's ow
 gives the same hashes when nothing that shows changed (a game's own pictures differ from run to run with the frames it skips),
 and the renderer's speed is measured without the game's.
 
+### The trace build
+
+A build with `-DPS2_TRACE_ENTER` (C and C++ flags; `cmake -S . -B build-trace ...`) puts a hook at each recompiled function's
+entry and in every store, for finding why a game stops or what a library is waiting for. The generated code is the same without
+the flag (the macros are nothing). What it gives, all by environment variables and none when they're unset:
+
+- `PS2_TRACE_FILE=path`: how often each function was entered, written when a `--run-seconds` run ends (`addr count` per line);
+  two runs of different lengths show what ran only after a point.
+- `PS2_TRACE_ARGS=a,b,...`: the first 40 entries (and every 100th after) of those functions with a0-a3 and RA.
+- `PS2_TRACE_FIND=LOW-HIGH`: the first 80 entries with an argument register in the range (who is handed a buffer).
+- `PS2_TRACE_WATCH=ADDR[:BYTES]`: the first 40 stores into a range, each with the guest's call stack (who writes a flag).
+- `PS2_TRACE_POKE=SECONDS:ADDR=VALUE`: one word set at a time, to test a theory without rebuilding.
+- At the end of a run the SPU2's two cores' state (attributes, mixes, master volumes) is logged.
+
+Reading a stuck game this way: find what it polls (ReferThreadStatus, a flag), watch the flag's stores, walk the callers up with the
+call graph (a script over the generated C) to the first function that ran but didn't call the next one, then look at its test.
+Breakpoints in a debugger on recompiled functions aren't reliable: direct calls inside a unit are inlined.
+
 ### Not done yet
 
-The SPU2's DMA timing, rumble, the
-memory card's newer protocol (libmc 2.6 on), the VU flags in macro mode, the FPU's exact rounding. The IPU's stall control
-(D_CTRL's STS with fromIPU) and its exact timing; a game's own movie player hasn't yet run on the IPU in a running game.
+The SPU2's DMA timing, rumble, the memory card's newer protocol (libmc 2.6 on), the VU flags in macro mode, the FPU's exact
+rounding. The IPU's stall control (D_CTRL's STS with fromIPU) and its exact timing. The IPU decodes Biohazard Outbreak's 21
+movies in the game (the opening plays whole); other games' own players haven't run on it. The network (AVETCP/SN, DEV9/SMAP).
 
 ## Repositories and licences
 
