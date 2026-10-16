@@ -2,6 +2,7 @@
 // ask for a snapshot, read it, decide the next). One command a line:
 //   key NAME[+NAME] [HOLD]   keys (bindings.txt's names: W, Left Shift, Mouse Left) held HOLD game seconds (0.3)
 //   snap NAME                a picture, NAME.<n>.png in the --snapshots folder, at the next vblank
+//   ram FILE                 the 32 MB of main memory written to FILE (to look for what the game loaded: texts, tables)
 //   quit                     the runtime stops
 #include "runtime.h"
 
@@ -62,6 +63,20 @@ void Handle(const std::string& line)
         std::string name;
         in >> name;
         GsLiveSnapshot(name.empty() ? "live" : name);
+    }
+    else if (command == "ram")
+    {
+        std::string file;
+        in >> file;
+        FILE* f = fopen(file.c_str(), "wb");
+        if (!f || fwrite(Ram(), 1, 32u << 20, f) != (32u << 20))
+        {
+            Log("--control: cannot write main memory to %s", file.c_str());
+        }
+        if (f)
+        {
+            fclose(f);
+        }
     }
     else if (command == "quit")
     {
