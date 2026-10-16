@@ -373,6 +373,13 @@ inline u32 ReciprocalSquareRoot(u32 fsBits, u32 ftBits, u32& flags)
     return ClampScalar(std::bit_cast<u32>(fs / root));
 }
 
+// An EFU operation's result for P (vu.cpp's, the interpreter's)
+inline u32 Efu(EfuOp op, V4u fs, u32 fsf)
+{
+    u32 lanes[4] = {fs[0], fs[1], fs[2], fs[3]};
+    return EfuResult(op, lanes, fsf);
+}
+
 // The static part of the pipelines' state between two instructions: what's in flight relative to the next instruction's cycle.
 // A translated program's code is made for one of these at each place it can be entered (vu1translate.cpp matches the
 // interpreter's state against them)
@@ -399,7 +406,8 @@ struct Signature
     u8 backupCycles;
     u8 backupReg;
     u8 anyEntry;
-    u8 pad;
+    u8 efuBusy;
+    s8 efuReady;
     Fmac fmac[3];
     Ialu ialu[4];
 };
@@ -425,6 +433,7 @@ struct Slots
     u32 visibleDivFlags;
     u32 fdivValue;
     u32 fdivFlags;
+    u32 efuValue;
     u32 backupValue;
     u32 stickyBits;
     Sticky sticky;

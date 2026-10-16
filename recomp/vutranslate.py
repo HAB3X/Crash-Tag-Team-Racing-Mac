@@ -172,8 +172,10 @@ def read_programs(elf_path, config_path=None):
 
 
 # What the translation handles (anything else: the block stops before it and the interpreter runs it)
-UNSUPPORTED_LOWER = {'unknown', 'esadd', 'ersadd', 'eleng', 'erleng', 'eatanxy', 'eatanxz', 'esum', 'ercpr', 'esqrt',
-                     'ersqrt', 'esin', 'eatan', 'eexp', 'waitp', 'mfp', 'fseq', 'fsor'}
+UNSUPPORTED_LOWER = {'unknown', 'fseq', 'fsor'}
+# The EFU's lower instructions (EfuOp's members, vu.h), each leaving a result in P a number of cycles later
+EFU_OPS = ('esadd', 'ersadd', 'eleng', 'erleng', 'eatanxy', 'eatanxz', 'esum', 'ercpr', 'esqrt', 'ersqrt', 'esin', 'eatan',
+           'eexp')
 ARITH_UPPERS = {'arith', 'opmula', 'opmsub'}
 
 
@@ -204,7 +206,7 @@ def sig_key(sig):
     return sig
 
 
-EMPTY_SIGNATURE = ((), None, (), (0, 0), False)  # fmac entries, fdiv ready, ialu, backup, anyEntry
+EMPTY_SIGNATURE = ((), None, None, (), (0, 0), False)  # fmac entries, fdiv ready, efu ready, ialu, backup, anyEntry
 
 # Every signature gets a number (the tables in the C++ refer to them by it)
 SIGNATURES = {}
@@ -379,7 +381,7 @@ class Sim:
 
     def __init__(self, translator, sig):
         self.t = translator
-        entries, fdiv, ialu, backup, any_entry = sig
+        entries, fdiv, efu, ialu, backup, any_entry = sig
         self.cycle = 0
         self.entries = []
         for k, (start, ur, um, lr, lm, flags) in enumerate(entries):
@@ -388,9 +390,11 @@ class Sim:
         self.vis_clip = 'vis_clip'
         self.vis_div = 'vis_div'
         self.q = 'Q'
+        self.p = 'P'
         self.pmac = 'pmac'
         self.pclip = 'pclip'
         self.fdiv = None if fdiv is None else (fdiv, 'fdiv_val', 'fdiv_flags')
+        self.efu = None if efu is None else (efu, 'efu_val')
         self.ialu = [(ready, reg) for ready, reg in ialu]
         self.backup_cycles, self.backup_reg = backup
         self.bk_val = 'bk_val'
@@ -408,9 +412,10 @@ class Sim:
         entries = tuple((e.start - now, e.ur, e.um, e.lr, e.lm, e.flags) for e in self.entries)
         assert all(-3 <= e[0] <= -1 for e in entries), entries
         fdiv = None if self.fdiv is None else self.fdiv[0] - now
+        efu = None if self.efu is None else self.efu[0] - now
         ialu = tuple(sorted((ready - now, reg) for ready, reg in self.ialu if ready > now))
         backup = (self.backup_cycles, self.backup_reg if self.backup_cycles > 0 else 0)
-        return (entries, fdiv, ialu, backup, self.any_entry)
+        return (entries, fdiv, efu, ialu, backup, self.any_entry)
 
     def assign_slots(self, out, indent):
         """The values the next variant (or the exit) finds in the slot variables."""
@@ -419,10 +424,12 @@ class Sim:
             pairs.append(('e%d_mac' % (k + 1), e.mac, 'V4u'))
             pairs.append(('e%d_clip' % (k + 1), e.clip, 'u32'))
         pairs += [('vis_mac', self.vis_mac, 'V4u'), ('vis_clip', self.vis_clip, 'u32'), ('vis_div', self.vis_div, 'u32'),
-                  ('Q', self.q, 'u32'), ('pmac', self.pmac, 'V4u'), ('pclip', self.pclip, 'u32'),
+                  ('Q', self.q, 'u32'), ('P', self.p, 'u32'), ('pmac', self.pmac, 'V4u'), ('pclip', self.pclip, 'u32'),
                   ('bk_val', self.bk_val, 'u16')]
         if self.fdiv is not None:
             pairs += [('fdiv_val', self.fdiv[1], 'u32'), ('fdiv_flags', self.fdiv[2], 'u32')]
+        if self.efu is not None:
+            pairs += [('efu_val', self.efu[1], 'u32')]
         pairs = [p for p in pairs if p[0] != p[1]]
         if not pairs:
             return
@@ -455,6 +462,9 @@ class Sim:
             self.q = self.fdiv[1]
             self.vis_div = self.fdiv[2]
             self.fdiv = None
+        if self.efu is not None and cycle >= self.efu[0]:
+            self.p = self.efu[1]
+            self.efu = None
 
     def ready_for(self, d):
         """Whether the instruction can be translated in this state (its stalls and what lands before it worked out on a copy).
@@ -507,6 +517,9 @@ class Sim:
             self.fmac_stall(d.lower_read1, d.lower_read1_mask)
             if d.pipe == 'fdiv' and self.fdiv is not None:
                 self.cycle = max(self.cycle, self.fdiv[0])
+            elif d.pipe == 'efu' and self.efu is not None:
+                # One cycle before the result lands (vu.cpp: the interpreter's rule); the new result replaces it
+                self.cycle = max(self.cycle, self.efu[0] - 1)
             elif d.pipe == 'branch':
                 for ready, reg in self.ialu:
                     if ready > self.cycle and (d.lower_read_vi >> reg) & 1:
@@ -730,7 +743,7 @@ class Sim:
                 out.append('    const u32 %s = %s;' % (a, at))
                 out.append('    Store(mem + %s, Blend<%d>(Load(mem + %s), %s));' % (a, mask, a, vf(reg)))
 
-        if op in ('nop', 'waitq'):
+        if op in ('nop', 'waitq', 'waitp'):
             return None
         if op == 'lq':
             load_into(d.lft, self.address(is_, imm))
@@ -886,6 +899,14 @@ class Sim:
             self.write_vi(it, 'vu.itop', out)
         elif op == 'xgkick':
             self.kick(o, is_, out)
+        elif op == 'mfp':
+            if d.lft != 0:
+                out.append('    %s = Blend<%d>(%s, Splat(%s));' % (vf(d.lft), mask, vf(d.lft), self.p))
+                self.set_clean(d.lft, mask, 0)
+        elif op in EFU_OPS:
+            v = t.new('e')
+            out.append('    const u32 %s = Efu(EfuOp::%s, %s, %d);' % (v, op.capitalize(), vf(d.lfs), d.fsf))
+            self.efu = (self.cycle + d.latency, v)
         elif op in ('div', 'sqrt', 'rsqrt'):
             v = t.new('q')
             f = t.new('f')
@@ -904,7 +925,7 @@ class Sim:
 
     def kick(self, o, is_, out):
         """XGKICK: the registers written back (the GIF and the checks see them), the packet sent."""
-        out.append('    SYNC_REGISTERS(%s, %s, %s);' % (self.vis_mac, self.vis_clip, self.q))
+        out.append('    SYNC_REGISTERS(%s, %s, %s, %s);' % (self.vis_mac, self.vis_clip, self.q, self.p))
         out.append('    vu.kickPc = (base + %d) & %s;' % (o, CODE))
         out.append('    vu.Kick(%s & 0x3FF);' % vi(is_))
 
@@ -952,7 +973,7 @@ def translate_all(root, config_path=None):
         tr.pending = []
     for tr, o in run_entries:
         tr.variant(o, EMPTY_SIGNATURE)
-    settled = EMPTY_SIGNATURE[:4] + (True,)
+    settled = EMPTY_SIGNATURE[:5] + (True,)
     for tr, o in indirect_entries:
         tr.variant(o, EMPTY_SIGNATURE)
         tr.variant(o, settled)
@@ -975,12 +996,12 @@ def translate_all(root, config_path=None):
 
 
 def c_signature(sig):
-    entries, fdiv, ialu, backup, any_entry = sig
+    entries, fdiv, efu, ialu, backup, any_entry = sig
     fm = ', '.join('{%d, %d, %d, %d, %d, %d}' % e for e in entries) or '{}'
     ia = ', '.join('{%d, %d}' % e for e in ialu) or '{}'
-    return '{%d, %d, %d, %d, %d, %d, %d, 0, {%s}, {%s}}' % (
+    return '{%d, %d, %d, %d, %d, %d, %d, %d, %d, {%s}, {%s}}' % (
         len(entries), len(ialu), 0 if fdiv is None else 1, 0 if fdiv is None else fdiv, backup[0], backup[1],
-        1 if any_entry else 0, fm, ia)
+        1 if any_entry else 0, 0 if efu is None else 1, 0 if efu is None else efu, fm, ia)
 
 
 HEADER = '''// Made by recomp/vutranslate.py from the game's VU1 microcode (its executable's .vutext): don't edit.
@@ -1090,11 +1111,12 @@ inline u32 NextR(u32 r)
         vu.r = R; \\
     } while (false)
 
-#define SYNC_REGISTERS(SYNC_MAC, SYNC_CLIP, SYNC_Q) \\
+#define SYNC_REGISTERS(SYNC_MAC, SYNC_CLIP, SYNC_Q, SYNC_P) \\
     do \\
     { \\
         STORE_REGISTERS(); \\
         vu.q = (SYNC_Q); \\
+        vu.p = (SYNC_P); \\
         vu.macFlag = MacOf(SYNC_MAC); \\
         vu.clipFlag = (SYNC_CLIP); \\
         vu.executed += count; \\
@@ -1120,6 +1142,7 @@ FUNCTION_START = '''int %(name)s%(index)d(Vu& vu, VuMicroState& st, Slots& slots
 %(viloads)s
     u32 I = vu.i;
     u32 Q = vu.q;
+    u32 P = vu.p;
     u32 R = vu.r;
     V4u pmac = slots.pendingMac;
     V4u vis_mac = slots.visibleMac;
@@ -1134,6 +1157,7 @@ FUNCTION_START = '''int %(name)s%(index)d(Vu& vu, VuMicroState& st, Slots& slots
     u32 vis_div = slots.visibleDivFlags;
     u32 fdiv_val = slots.fdivValue;
     u32 fdiv_flags = slots.fdivFlags;
+    u32 efu_val = slots.efuValue;
     u16 bk_val = static_cast<u16>(slots.backupValue);
     u32 sticky_bits = slots.stickyBits;
     Sticky sticky = slots.sticky;
@@ -1153,6 +1177,7 @@ FUNCTION_START = '''int %(name)s%(index)d(Vu& vu, VuMicroState& st, Slots& slots
 FUNCTION_END = '''Exit:
     STORE_REGISTERS();
     vu.q = Q;
+    vu.p = P;
     vu.executed += count;
     slots.pendingMac = pmac;
     slots.visibleMac = vis_mac;
@@ -1167,6 +1192,7 @@ FUNCTION_END = '''Exit:
     slots.visibleDivFlags = vis_div;
     slots.fdivValue = fdiv_val;
     slots.fdivFlags = fdiv_flags;
+    slots.efuValue = efu_val;
     slots.backupValue = bk_val;
     slots.stickyBits = sticky_bits;
     slots.sticky = sticky;

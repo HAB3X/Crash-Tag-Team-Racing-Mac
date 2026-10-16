@@ -122,7 +122,7 @@ public:
         vu.FlushPipes(st);
         Signature signature = {};
         const VuPipelines& pipes = st.pipes;
-        if (pipes.efu || pipes.fmacCount > 3)
+        if (pipes.fmacCount > 3)
         {
             return Miss(program, offset, 3);
         }
@@ -155,6 +155,12 @@ public:
         {
             signature.fdivBusy = 1;
             signature.fdivReady = static_cast<s8>(static_cast<s64>(pipes.fdivStart + pipes.fdivLatency - st.cycle));
+        }
+
+        if (pipes.efu)
+        {
+            signature.efuBusy = 1;
+            signature.efuReady = static_cast<s8>(static_cast<s64>(pipes.efuStart + pipes.efuLatency - st.cycle));
         }
 
         Signature::Ialu ialu[4];
@@ -260,6 +266,7 @@ public:
         slots.visibleDivFlags = vu.statusFlag & 0x30;
         slots.fdivValue = pipes.fdivValue;
         slots.fdivFlags = pipes.fdivStatus & 0x30;
+        slots.efuValue = pipes.efuValue;
         slots.backupValue = st.backupValue;
         target = {&code, base, code.variants[variant].label};
         Trace(program, base, offset, variant);
@@ -381,8 +388,8 @@ private:
                                f.lowerReg, f.lowerMask, f.flags);
         }
 
-        std::snprintf(line + n, sizeof(line) - n, " fdiv %d/%d ialu %u backup %u/%u any %u", signature.fdivBusy,
-                      signature.fdivReady, signature.ialuCount, signature.backupCycles, signature.backupReg,
+        std::snprintf(line + n, sizeof(line) - n, " fdiv %d/%d efu %d/%d ialu %u backup %u/%u any %u",
+                      signature.fdivBusy, signature.fdivReady, signature.efuBusy, signature.efuReady, signature.ialuCount, signature.backupCycles, signature.backupReg,
                       signature.anyEntry);
         (*g_MissSignatures)[line]++;
     }
@@ -569,6 +576,7 @@ public:
         u32 i;
         u32 r;
         u32 q;
+        u32 p;
         u32 mac;
         u32 clip;
     };
@@ -692,6 +700,7 @@ private:
         kick.i = vu.i;
         kick.r = vu.r;
         kick.q = vu.q;
+        kick.p = vu.p;
         kick.mac = vu.macFlag;
         kick.clip = vu.clipFlag;
         return kick;
@@ -730,9 +739,9 @@ private:
         {
             what = "ACC";
         }
-        else if (expected.i != got.i || expected.r != got.r || expected.q != got.q)
+        else if (expected.i != got.i || expected.r != got.r || expected.q != got.q || expected.p != got.p)
         {
-            what = "I, R or Q";
+            what = "I, R, Q or P";
         }
         else if (expected.mac != got.mac || expected.clip != got.clip)
         {
@@ -862,6 +871,14 @@ void LeaveTranslation(Vu& vu, VuMicroState& st, const Slots& slots, const Signat
         pipes.fdivLatency = static_cast<u32>(signature.fdivReady);
         pipes.fdivValue = slots.fdivValue;
         pipes.fdivStatus = (start & 0xFC0) | slots.fdivFlags;
+    }
+
+    if (signature.efuBusy)
+    {
+        pipes.efu = true;
+        pipes.efuStart = cycle;
+        pipes.efuLatency = static_cast<u32>(signature.efuReady);
+        pipes.efuValue = slots.efuValue;
     }
 
     for (u32 n = 0; n < signature.ialuCount; n++)

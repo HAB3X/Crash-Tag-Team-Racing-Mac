@@ -97,6 +97,28 @@ struct VuMicroState
     bool anyEntry = false;
 };
 
+// The EFU's operations, in the order of the lower instructions ESADD to EEXP
+enum class EfuOp : u8
+{
+    Esadd,
+    Ersadd,
+    Eleng,
+    Erleng,
+    Eatanxy,
+    Eatanxz,
+    Esum,
+    Ercpr,
+    Esqrt,
+    Ersqrt,
+    Esin,
+    Eatan,
+    Eexp,
+};
+
+// What an EFU operation leaves in P (as bits), from FS's four lanes and the instruction's field: the interpreter's and the
+// translated programs' alike
+u32 EfuResult(EfuOp op, const u32 fs[4], u32 fsf);
+
 class Vu
 {
 public:
