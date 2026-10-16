@@ -299,7 +299,9 @@ class Program:
         jt_targets = set()
         for t in self.jump_tables.values():
             jt_targets |= set(t)
-        not_starts |= jt_targets
+        # A jump table's targets are labels, unless the config names one a function start: a game's handler tables are
+        # jumped through (JR) as well as called, and their entries are whole functions
+        not_starts |= jt_targets - set(self.config.get("extra_functions", []))
         starts |= self.computed_starts
         pointers = self.data_pointers() - jt_targets
         # A switch's cases are one function's labels: a data word that points between them (a number in a table that looks
