@@ -701,7 +701,7 @@ void SysStartThread(std::unique_lock<std::mutex>& lock, Ps2Cpu* c)
     MakeReady(t);
     StartHostThread(t);
     PS2_LOG(LogThread, "StartThread %d arg %08x", id, t->arg);
-    Ret(c, KE_OK);
+    Ret(c, id);
     Preempt(lock);
 }
 
@@ -736,7 +736,7 @@ void SysTerminateThread(Ps2Cpu* c)
     t->state = State::Dormant;
     t->terminated = true;
     t->cv.notify_one();
-    Ret(c, KE_OK);
+    Ret(c, t->id);
 }
 
 void SysDeleteThread(Ps2Cpu* c)
@@ -749,7 +749,7 @@ void SysDeleteThread(Ps2Cpu* c)
         return;
     }
     g_threads.erase(id);
-    Ret(c, KE_OK);
+    Ret(c, id);
 }
 
 void SysChangePriority(std::unique_lock<std::mutex>& lock, Ps2Cpu* c, bool fromInterrupt)
@@ -794,7 +794,7 @@ void SysRotate(std::unique_lock<std::mutex>& lock, Ps2Cpu* c, bool fromInterrupt
         {
             self->interruptsEnabled = g_interruptsEnabled;
             MakeReady(self);
-            Ret(c, KE_OK);
+            Ret(c, priority);
             Dispatch();
             WaitTurn(lock, self);
             return;
@@ -815,7 +815,7 @@ void SysRotate(std::unique_lock<std::mutex>& lock, Ps2Cpu* c, bool fromInterrupt
             first->readySeq = g_readySeq++;
         }
     }
-    Ret(c, KE_OK);
+    Ret(c, priority);
 }
 
 void SysSleepThread(std::unique_lock<std::mutex>& lock, Ps2Cpu* c)
@@ -850,11 +850,23 @@ void SysWakeupThread(std::unique_lock<std::mutex>& lock, Ps2Cpu* c, bool fromInt
     {
         t->wakeups++;
     }
-    Ret(c, KE_OK);
+    Ret(c, t->id);
     if (!fromInterrupt)
     {
         Preempt(lock);
     }
+}
+
+// The EE kernel's thread status: a suspended thread reads as THS_SUSPEND (8), or THS_WAITSUSPEND (0xC) while it also waits;
+// READY and RUN are not kept beside the suspend bit
+u32 ThreadStatus(const Thread* t)
+{
+    u32 status = t->state == State::Running ? 1 : t->state == State::Ready ? 2 : t->state == State::Waiting ? 4 : 16;
+    if (t->suspended && status != 16)
+    {
+        status = status == 4 ? 0xC : 8;
+    }
+    return status;
 }
 
 void SysReferThreadStatus(Ps2Cpu* c)
@@ -866,20 +878,15 @@ void SysReferThreadStatus(Ps2Cpu* c)
         Ret(c, KE_UNKNOWN_THID);
         return;
     }
+    u32 status = ThreadStatus(t);
     if (p != 0)
     {
-        u32 status = t->state == State::Running ? 1 : t->state == State::Ready ? 2 : t->state == State::Waiting ? 4 : 16;
-        if (t->suspended)
-        {
-            status |= 8;
-        }
         u32 words[12] = {status, t->entry, t->stack, t->stackSize, t->gp, static_cast<u32>(t->initPriority),
                          static_cast<u32>(t->priority), t->attr, t->option,
                          t->wait == WaitKind::Sleep ? 1u : t->wait == WaitKind::Sema ? 2u : 0u,
                          static_cast<u32>(t->waitSema), static_cast<u32>(t->wakeups)};
         std::memcpy(Host(p), words, sizeof(words));
     }
-    u32 status = t->state == State::Running ? 1 : t->state == State::Ready ? 2 : t->state == State::Waiting ? 4 : 16;
     Ret(c, status);
 }
 
@@ -1430,7 +1437,7 @@ extern "C" void ps2_syscall(Ps2Cpu* c, u32 pc)
             }
             MakeReady(t);
         }
-        Ret(c, 0);
+        Ret(c, t != nullptr ? t->id : KE_UNKNOWN_THID);
         if (n == 0x2D && !fromInterrupt)
         {
             Preempt(lock);
@@ -1471,7 +1478,7 @@ extern "C" void ps2_syscall(Ps2Cpu* c, u32 pc)
         {
             t->suspended = true;
         }
-        Ret(c, 0);
+        Ret(c, t != nullptr ? t->id : KE_UNKNOWN_THID);
         if (t == g_current && g_inInterrupt == 0)
         {
             Block(lock, t);
@@ -1487,12 +1494,12 @@ extern "C" void ps2_syscall(Ps2Cpu* c, u32 pc)
             t->suspended = false;
             if (n == 0x39 && !fromInterrupt)
             {
-                Ret(c, 0);
+                Ret(c, t->id);
                 Preempt(lock);
                 break;
             }
         }
-        Ret(c, 0);
+        Ret(c, t != nullptr ? t->id : KE_UNKNOWN_THID);
         break;
     }
     case 0x3C: // SetupThread(gp, stack, stack size, args, root)

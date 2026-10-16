@@ -69,3 +69,122 @@ bool Once(const std::string& key)
     return seen.insert(key).second;
 }
 }
+
+#ifdef PS2_TRACE_ENTER
+// The function entry counts of a PS2_TRACE_ENTER build: one counter for each word of the guest's 32 MB
+static uint32_t g_enterCounts[1u << 23];
+
+uint32_t ps2_watch_low = 0xFFFFFFFFu, ps2_watch_size = 0;
+static int g_watchCount = 0;
+
+void ps2_trace_store(uint32_t address, uint64_t value, int bytes)
+{
+    if (g_watchCount++ < 40)
+    {
+        Ps2::Log("store %d bytes to %08x = %llx", bytes, address, static_cast<unsigned long long>(value));
+        Ps2::Backtrace();
+    }
+}
+
+static void InitWatch()
+{
+    const char* r = getenv("PS2_TRACE_WATCH");
+    if (r == nullptr)
+    {
+        return;
+    }
+    char* end;
+    ps2_watch_low = static_cast<uint32_t>(strtoul(r, &end, 16));
+    ps2_watch_size = *end == ':' ? static_cast<uint32_t>(strtoul(end + 1, nullptr, 16)) : 4;
+}
+
+// $PS2_TRACE_ARGS: comma separated hex addresses whose first entries (to 40) print their argument registers and RA
+static uint32_t g_traceArgs[16];
+static int g_traceArgCount = -1;
+
+void ps2_trace_enter(uint32_t address)
+{
+    if (g_traceArgCount < 0)
+    {
+        g_traceArgCount = 0;
+        InitWatch();
+        const char* list = getenv("PS2_TRACE_ARGS");
+        while (list != nullptr && *list != 0 && g_traceArgCount < 16)
+        {
+            char* end;
+            g_traceArgs[g_traceArgCount++] = static_cast<uint32_t>(strtoul(list, &end, 16));
+            list = *end == ',' ? end + 1 : end;
+        }
+    }
+    // $PS2_TRACE_FIND=LOW-HIGH (hex): the first 80 entries with an argument register inside the range
+    static uint32_t findLow = 1, findHigh = 0;
+    static int findInit = 0, findCount = 0;
+    if (!findInit)
+    {
+        findInit = 1;
+        const char* r = getenv("PS2_TRACE_FIND");
+        if (r != nullptr)
+        {
+            char* end;
+            findLow = static_cast<uint32_t>(strtoul(r, &end, 16));
+            findHigh = *end == '-' ? static_cast<uint32_t>(strtoul(end + 1, nullptr, 16)) : 0;
+        }
+    }
+    if (findLow <= findHigh && findCount < 80 && Ps2::t_cpu != nullptr)
+    {
+        const Ps2Cpu* c = Ps2::t_cpu;
+        for (int reg = 4; reg < 8; reg++)
+        {
+            uint32_t v = c->r[reg].uw[0];
+            if (v >= findLow && v < findHigh)
+            {
+                findCount++;
+                Ps2::Log("find %08x a%d=%08x (a0=%08x a1=%08x a2=%08x a3=%08x) ra=%08x", address, reg - 4, v, c->r[4].uw[0],
+                         c->r[5].uw[0], c->r[6].uw[0], c->r[7].uw[0], c->r[31].uw[0]);
+                break;
+            }
+        }
+    }
+    for (int i = 0; i < g_traceArgCount; i++)
+    {
+        if (g_traceArgs[i] == address && (g_enterCounts[(address & 0x1FFFFFFF) >> 2] < 40 || g_enterCounts[(address & 0x1FFFFFFF) >> 2] % 100 == 0) && Ps2::t_cpu != nullptr)
+        {
+            const Ps2Cpu* c = Ps2::t_cpu;
+            Ps2::Log("enter %08x #%u a0=%08x a1=%08x a2=%08x a3=%08x ra=%08x", address,
+                     g_enterCounts[(address & 0x1FFFFFFF) >> 2], c->r[4].uw[0], c->r[5].uw[0], c->r[6].uw[0], c->r[7].uw[0],
+                     c->r[31].uw[0]);
+        }
+    }
+    uint32_t& n = g_enterCounts[(address & 0x1FFFFFFF) >> 2];
+    if (n != 0xFFFFFFFFu)
+    {
+        n++;
+    }
+}
+
+namespace Ps2
+{
+void TraceEnterDump()
+{
+    const char* path = getenv("PS2_TRACE_FILE");
+    if (path == nullptr)
+    {
+        return;
+    }
+    FILE* f = fopen(path, "w");
+    if (f == nullptr)
+    {
+        Log("PS2_TRACE_FILE %s: cannot write", path);
+        return;
+    }
+    for (uint32_t i = 0; i < (1u << 23); i++)
+    {
+        if (g_enterCounts[i] != 0)
+        {
+            fprintf(f, "%08x %u\n", i << 2, g_enterCounts[i]);
+        }
+    }
+    fclose(f);
+}
+}
+#endif

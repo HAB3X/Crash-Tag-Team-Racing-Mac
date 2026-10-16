@@ -2,7 +2,7 @@
 // reuses what it reads), in normal, source chain (tags CNT, NEXT, REF, REFS, REFE, CALL, RET, END with the two level call
 // stack, TTE for the VIFs) and interleave mode; the end raises the channel's interrupt. The MFIFO: with D_CTRL's MFD set,
 // fromSPR writes into a ring in memory (D_RBOR, D_RBSR) and VIF1 or GIF, started in chain mode, drains it as far as fromSPR has
-// filled it, then waits (still busy) for more.
+// filled it, then waits (still busy) for more. fromIPU and toIPU instead move data as the IPU gives and takes it (ipu/ipu.cpp).
 #include "runtime.h"
 
 #include "../../hw/ee/gif.h"
@@ -303,13 +303,88 @@ void RunInterleave(int ch, Channel& c)
     }
 }
 
+// A source chain's tag at TADR taken: CHCR's upper half is the tag's, MADR and QWC its data, TADR where the chain goes next,
+// and whether the chain ends after the data (REFE, END, RET with nothing to return to, a CALL with a full address stack, or
+// the tag's IRQ with CHCR's TIE). `asp` is the address stack's depth (CHCR's ASP), kept by the caller. Returns the tag
+const u8* ReadTag(int ch, Channel& c, u32& asp, bool log)
+{
+    const u8* tagp = DmaHost(c.tadr);
+    u64 tag;
+    std::memcpy(&tag, tagp, 8);
+    u32 qwc = static_cast<u32>(tag & 0xFFFF);
+    u32 id = static_cast<u32>((tag >> 28) & 7);
+    bool irq = (tag >> 31) & 1;
+    u32 addr = static_cast<u32>((tag >> 32) & 0xFFFFFFF0u);
+    // CHCR's TAG: the upper half of the tag's first word (its PCE, ID and IRQ), as the last tag read left it. A game's
+    // handler reads the IRQ bit there to know its chain's last tag was reached (Biohazard Outbreak's VIF1 handler)
+    c.chcr = (c.chcr & 0xFFFF) | (static_cast<u32>(tag) & 0xFFFF0000u);
+    if (log)
+    {
+        PS2_LOG(LogDma, "  tag at %08x: id %u qwc %u addr %08x irq %d", c.tadr, id, qwc, addr, irq ? 1 : 0);
+    }
+    bool end = false;
+    u32 dataAt = 0;
+    u32 next = 0;
+    switch (id)
+    {
+    case 0: // REFE
+        dataAt = addr;
+        next = c.tadr + 16;
+        end = true;
+        break;
+    case 1: // CNT
+        dataAt = c.tadr + 16;
+        next = dataAt + qwc * 16;
+        break;
+    case 2: // NEXT
+        dataAt = c.tadr + 16;
+        next = addr;
+        break;
+    case 3: // REF
+    case 4: // REFS
+        dataAt = addr;
+        next = c.tadr + 16;
+        break;
+    case 5: // CALL
+        dataAt = c.tadr + 16;
+        if (asp >= 2)
+        {
+            Log("DMA %s: CALL with a full address stack", ChannelName(ch));
+            end = true;
+            break;
+        }
+        c.asr[asp++] = dataAt + qwc * 16;
+        next = addr;
+        break;
+    case 6: // RET
+        dataAt = c.tadr + 16;
+        if (asp > 0)
+        {
+            next = c.asr[--asp];
+        }
+        else
+        {
+            end = true;
+        }
+        break;
+    case 7: // END
+        dataAt = c.tadr + 16;
+        end = true;
+        break;
+    }
+    c.tadr = next;
+    c.madr = dataAt;
+    c.qwc = qwc;
+    c.chainEnds = end || (irq && (c.chcr & 0x80) != 0);
+    return tagp;
+}
+
 // A source chain from TADR to its end. The MFIFO's drain reads its tags from the ring and stops where fromSPR has filled it
 // up to (Waiting); data at an address in the ring is read there, wrapping. A VIF stalled by a code's interrupt bit stops it
 // (Stalled), with the tag's data left in MADR and QWC
 Run RunChain(int ch, Channel& c)
 {
     bool tte = (c.chcr & 0x40) != 0;
-    bool tie = (c.chcr & 0x80) != 0;
     bool ring = ch == MfifoDrain();
     u32 asp = (c.chcr >> 4) & 3;
     Run result = Run::Ended;
@@ -327,78 +402,11 @@ Run RunChain(int ch, Channel& c)
                 break;
             }
         }
-        u8* tagp = DmaHost(c.tadr);
-        u64 tag;
-        std::memcpy(&tag, tagp, 8);
-        u32 qwc = static_cast<u32>(tag & 0xFFFF);
-        u32 id = static_cast<u32>((tag >> 28) & 7);
-        bool irq = (tag >> 31) & 1;
-        u32 addr = static_cast<u32>((tag >> 32) & 0xFFFFFFF0u);
-        // CHCR's TAG: the upper half of the tag's first word (its PCE, ID and IRQ), as the last tag read left it. A game's
-        // handler reads the IRQ bit there to know its chain's last tag was reached (Biohazard Outbreak's VIF1 handler)
-        c.chcr = (c.chcr & 0xFFFF) | (static_cast<u32>(tag) & 0xFFFF0000u);
-        if (guard < 64 || (guard >= 100000 && guard < 100040))
-        {
-            PS2_LOG(LogDma, "  tag at %08x: id %u qwc %u addr %08x irq %d", c.tadr, id, qwc, addr, irq ? 1 : 0);
-        }
         if (guard == 999999)
         {
             Log("DMA %s: a chain of a million tags (at %08x): stopped", ChannelName(ch), c.tadr);
         }
-        bool end = false;
-        u32 dataAt = 0;
-        u32 next = 0;
-        switch (id)
-        {
-        case 0: // REFE
-            dataAt = addr;
-            next = c.tadr + 16;
-            end = true;
-            break;
-        case 1: // CNT
-            dataAt = c.tadr + 16;
-            next = dataAt + qwc * 16;
-            break;
-        case 2: // NEXT
-            dataAt = c.tadr + 16;
-            next = addr;
-            break;
-        case 3: // REF
-        case 4: // REFS
-            dataAt = addr;
-            next = c.tadr + 16;
-            break;
-        case 5: // CALL
-            dataAt = c.tadr + 16;
-            if (asp >= 2)
-            {
-                Log("DMA %s: CALL with a full address stack", ChannelName(ch));
-                end = true;
-                break;
-            }
-            c.asr[asp++] = dataAt + qwc * 16;
-            next = addr;
-            break;
-        case 6: // RET
-            dataAt = c.tadr + 16;
-            if (asp > 0)
-            {
-                next = c.asr[--asp];
-            }
-            else
-            {
-                end = true;
-            }
-            break;
-        case 7: // END
-            dataAt = c.tadr + 16;
-            end = true;
-            break;
-        }
-        c.tadr = next;
-        c.madr = dataAt;
-        c.qwc = qwc;
-        c.chainEnds = end || (irq && tie);
+        const u8* tagp = ReadTag(ch, c, asp, guard < 64 || (guard >= 100000 && guard < 100040));
         if (tte && (ch == 0 || ch == 1))
         {
             // The tag's upper two words to the VIF
@@ -418,9 +426,9 @@ Run RunChain(int ch, Channel& c)
         }
         if (ch == 9)
         {
-            std::memcpy(DmaHost(0x80000000u | c.sadr), DmaHost(dataAt), qwc * 16);
-            c.sadr += qwc * 16;
-            c.madr += qwc * 16;
+            std::memcpy(DmaHost(0x80000000u | c.sadr), DmaHost(c.madr), c.qwc * 16);
+            c.sadr += c.qwc * 16;
+            c.madr += c.qwc * 16;
             c.qwc = 0;
         }
         else if (!RunNormal(ch, c))
@@ -444,7 +452,11 @@ void Finish(int ch)
 {
     g_ch[ch].chcr &= ~0x100u;
     g_ch[ch].chainEnds = false;
-    RenderFlush();
+    if (ch != 3 && ch != 4)
+    {
+        // (The IPU's channels carry nothing for the GS, and end once or twice a macroblock)
+        RenderFlush();
+    }
     RaiseDmac(static_cast<u32>(ch));
 }
 
@@ -457,6 +469,11 @@ void Continue(int ch)
     {
         // The DMAC is off: the transfer stands still until DMAE is set again
         c.deferred = true;
+        return;
+    }
+    if (ch == 3 || ch == 4)
+    {
+        IpuDmaStarted(ch);
         return;
     }
     if (ch <= 1 && (ch == 0 ? Hw().vif0 : Hw().vif1)->stalled())
@@ -473,6 +490,32 @@ void Continue(int ch)
         return;
     }
     Finish(ch);
+}
+
+// fromIPU and toIPU move data as the IPU takes and gives it (DmacToIpu, DmacFromIpu), not all at once: a started transfer
+// stays busy until its data has gone into the IPU's FIFO, or its QWC has been filled from the IPU's output. toIPU's chain is
+// read a tag at a time; started again with data left of a tag (Sony's libipu stops and restarts it so), whether the chain
+// ends after that data is the tag's in CHCR (REFE, END, or IRQ with TIE), as the hardware keeps it
+void StartIpuChannel(int ch, Channel& c)
+{
+    u32 mode = (c.chcr >> 2) & 3;
+    if (ch == 3 ? mode != 0 : mode > 1)
+    {
+        Log("DMA %s in mode %u not done: ended at once", ChannelName(ch), mode);
+        Finish(ch);
+        return;
+    }
+    if (mode == 0 && c.qwc == 0)
+    {
+        Finish(ch);
+        return;
+    }
+    if (mode == 1 && c.qwc > 0)
+    {
+        u32 id = (c.chcr >> 28) & 7;
+        c.chainEnds = id == 0 || id == 7 || ((c.chcr & 0x80000000u) != 0 && (c.chcr & 0x80) != 0);
+    }
+    IpuDmaStarted(ch);
 }
 
 void Start(int ch)
@@ -492,6 +535,11 @@ void Start(int ch)
         return;
     }
     c.begun = true;
+    if (ch == 3 || ch == 4)
+    {
+        StartIpuChannel(ch, c);
+        return;
+    }
     if (ch == 5 || ch == 6 || ch == 7)
     {
         // The SIF's channels are the kernel's and the IOP's (sif.cpp); started directly they finish at once
@@ -535,6 +583,62 @@ void Start(int ch)
 }
 
 void DmacInit() {}
+
+u32 DmacToIpu(u8* out, u32 quadwords)
+{
+    Channel& c = g_ch[4];
+    u32 moved = 0;
+    u32 emptyTags = 0;
+    while (moved < quadwords && (c.chcr & 0x100) != 0 && (g_ctrl & 1) != 0)
+    {
+        bool chain = ((c.chcr >> 2) & 3) == 1;
+        if (c.qwc == 0)
+        {
+            if (!chain || c.chainEnds)
+            {
+                Finish(4);
+                break;
+            }
+            if (++emptyTags > 100000)
+            {
+                Fatal("DMA toIPU: 100,000 tags without data from %08x", c.tadr);
+            }
+            u32 asp = (c.chcr >> 4) & 3;
+            ReadTag(4, c, asp, (g_logMask & LogDma) != 0);
+            c.chcr = (c.chcr & ~0x30u) | (asp << 4);
+            continue;
+        }
+        u32 n = std::min(c.qwc, quadwords - moved);
+        std::memcpy(out + moved * 16, DmaHost(c.madr), n * 16);
+        c.madr += n * 16;
+        c.qwc -= n;
+        moved += n;
+        if (c.qwc == 0 && (!chain || c.chainEnds))
+        {
+            Finish(4);
+            break;
+        }
+    }
+    return moved;
+}
+
+u32 DmacFromIpu(const u8* data, u32 quadwords)
+{
+    Channel& c = g_ch[3];
+    if ((c.chcr & 0x100) == 0 || (g_ctrl & 1) == 0 || c.qwc == 0)
+    {
+        return 0;
+    }
+    u32 n = std::min(c.qwc, quadwords);
+    std::memcpy(DmaHost(c.madr), data, n * 16);
+    c.madr += n * 16;
+    c.qwc -= n;
+    if (c.qwc == 0)
+    {
+        Finish(3);
+    }
+    return n;
+}
 
 void DmacVifUnstall(int vif)
 {
@@ -605,6 +709,11 @@ void DmacWrite(u32 a, u32 v)
         case 0x1000E000:
         {
             PS2_LOG(LogDma, "D_CTRL = %08x", v);
+            if (((v >> 4) & 3) == 3 && Once("dmac-sts-ipu"))
+            {
+                // STS: fromIPU's address as a drain's stall limit (D_STADR) isn't kept
+                Log("D_CTRL's stall control with fromIPU as its source (%08x) not done", v);
+            }
             bool enabled = !(g_ctrl & 1) && (v & 1);
             g_ctrl = v;
             if (enabled)

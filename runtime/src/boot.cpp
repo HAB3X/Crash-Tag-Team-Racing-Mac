@@ -31,7 +31,7 @@ void Usage(const char* program)
 {
     fprintf(stderr,
             "usage: %s --disc IMAGE [--headless] [--snapshots DIR] [--snapshot-every S] [--snapshot-at S,S,...]\n"
-            "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq]\n"
+            "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq,ipu]\n"
             "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--settings DIR]\n"
             "          [--press S:BUTTON[+BUTTON][:HOLD],...]\n"
             "          [--type S:TEXT] [--click S:X,Y] [--ui S:KEY,KEY,...]\n"
@@ -96,7 +96,7 @@ u32 ParseLog(const std::string& list)
         u32 bit;
     } names[] = {{"kernel", LogKernel}, {"syscall", LogSyscall}, {"io", LogIo},   {"dma", LogDma},
                  {"sif", LogSif},       {"iop", LogIop},         {"gs", LogGs},   {"call", LogCall},
-                 {"thread", LogThread}, {"irq", LogIrq},         {"all", 0xFFFFFFFF}};
+                 {"thread", LogThread}, {"irq", LogIrq},         {"ipu", LogIpu}, {"all", 0xFFFFFFFF}};
     u32 mask = 0;
     size_t start = 0;
     while (start <= list.size())

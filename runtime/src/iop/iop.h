@@ -28,6 +28,13 @@ void IopServe(RpcCall& call);
 void McServ(RpcCall& call);
 // The pad server (padman.cpp)
 void PadMan(RpcCall& call);
+// The Dbc_Manager's RPC servers (0x80001300, 0x8000131B, 0x8000131C) and its drivers' modules loading (dbcman.cpp)
+void DbcServe(RpcCall& call);
+void DbcModuleLoaded(const std::string& name, const u8* elf, size_t size);
+// A port's DualShock 2 as it answers a read in its pressure mode (0x79), after the answer's first three bytes: the buttons
+// (active low), the sticks (right x, right y, left x, left y), the pressures of right, left, up, down, triangle, circle, cross,
+// square, L1, R1, L2, R2. From the runtime's input (PadSetInput)
+void PadDualShock2Report(u32 port, u8 report[18]);
 const char* IopServerName(u32 sid);
 void SifReplyTaken();
 }

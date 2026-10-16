@@ -1,5 +1,6 @@
 // The RPC servers of the IOP modules, high level: the module loader, the IOP heap, the file I/O manager (on the disc image),
-// the CD/DVD driver, the memory card (mcserv.cpp), the pads (padman.cpp), and stand-ins answering zeros for the rest. Every call to a server or function not done here is logged
+// the CD/DVD driver, the memory card (mcserv.cpp), the pads (padman.cpp), the Dbc_Manager (dbcman.cpp), and stand-ins answering
+// zeros for the rest. Every call to a server or function not done here is logged
 // once with its arguments: that log is the list of what's left.
 #include "iop.h"
 #include "cri_adx.h"
@@ -170,8 +171,16 @@ size_t ModuleExtent(const u8* elf, size_t size)
     return std::min<size_t>(size, static_cast<size_t>(shoff) + static_cast<size_t>(shentsize) * shnum);
 }
 
-// LIBSD.IRX's name for itself: its reverb presets are libsd's (sound/libsd.cpp)
-const char* const LibsdName = "Sound_Device_Library";
+// A module's image seen as it loads (its file, or its copy in the IOP's memory), for the stand-ins that take something from it:
+// LIBSD.IRX's reverb presets are libsd's (sound/libsd.cpp), the Dbc_Manager's drivers start (dbcman.cpp)
+void ModuleImageLoaded(const std::string& name, const u8* elf, size_t size)
+{
+    if (name == "Sound_Device_Library")
+    {
+        SdModuleLoaded(elf, size);
+    }
+    DbcModuleLoaded(name, elf, size);
+}
 
 // A module loaded: its ID, and the game's own module of that name (or, with none, known by a string in its image) started
 // with the arguments (arg_len bytes, each ending with a zero)
@@ -250,10 +259,7 @@ void LoadFile(RpcCall& c)
             std::vector<u8> elf((size + 2047) / 2048 * 2048);
             DiscReadSectors(lsn, static_cast<u32>(elf.size() / 2048), elf.data());
             name = ModuleName(elf.data(), size);
-            if (name == LibsdName)
-            {
-                SdModuleLoaded(elf.data(), size);
-            }
+            ModuleImageLoaded(name, elf.data(), size);
             PS2_LOG(LogIop, "IOP: load module %s", path.c_str());
             c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(0), elf.data(), size)));
             c.Out32(4, 0);
@@ -267,10 +273,7 @@ void LoadFile(RpcCall& c)
     {
         u32 at = c.In32(0) & (IopRamSize - 1);
         std::string name = ModuleName(IopMem() + at, IopRamSize - at);
-        if (name == LibsdName)
-        {
-            SdModuleLoaded(IopMem() + at, IopRamSize - at);
-        }
+        ModuleImageLoaded(name, IopMem() + at, IopRamSize - at);
         c.Out32(0, static_cast<u32>(ModuleLoaded(name, c, c.In32(4), IopMem() + at, IopRamSize - at)));
         c.Out32(4, 0);
         return;
@@ -634,6 +637,9 @@ const ServerName g_names[] = {
     {0x8000059A, "cdvd disk ready"},
     {0x8000059C, "cdvd disk ready"},
     {0x80000701, "sdrdrv"},
+    {0x80001300, "dbcman"},
+    {0x8000131B, "dbcman send_data2"},
+    {0x8000131C, "dbcman send_data3"},
 };
 }
 
@@ -754,6 +760,11 @@ void IopServe(RpcCall& c)
         break;
     case 0x80000701:
         Sdr(c);
+        break;
+    case 0x80001300:
+    case 0x8000131B:
+    case 0x8000131C:
+        DbcServe(c);
         break;
     default:
         Unhandled(c);

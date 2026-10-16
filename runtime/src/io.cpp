@@ -1,5 +1,5 @@
-// The EE's hardware registers (0x10000000-0x1FFFFFFF): the timers, the IPU, GIF and VIF registers and FIFOs, the DMAC, the
-// INTC, the SIF's mailbox registers, the GS's privileged registers, and the boot ROM.
+// The EE's hardware registers (0x10000000-0x1FFFFFFF): the timers, the IPU's (ipu/ipu.cpp), GIF and VIF registers and FIFOs,
+// the DMAC, the INTC, the SIF's mailbox registers, the GS's privileged registers, and the boot ROM.
 #include "runtime.h"
 
 #include "../../hw/ee/gif.h"
@@ -101,8 +101,7 @@ u32 Read32Io(u32 a)
     }
     if (a < 0x10003000)
     {
-        // IPU: idle
-        return 0;
+        return IpuRead32(a);
     }
     if (a < 0x10003800)
     {
@@ -215,11 +214,16 @@ void Write32Io(u32 a, u32 v)
         (a < 0x10003C00 ? Hw().vif0 : Hw().vif1)->mark = v & 0xFFFF;
         return;
     }
+    if (a >= 0x10002000 && a < 0x10003000)
+    {
+        IpuWrite32(a, v);
+        return;
+    }
     if (a < 0x10004000)
     {
         if (Once("iowrite" + std::to_string(a)))
         {
-            PS2_LOG(LogIo, "write %08x to %08x (GIF/VIF/IPU register)", v, a);
+            PS2_LOG(LogIo, "write %08x to %08x (GIF/VIF register)", v, a);
         }
         return;
     }
@@ -283,6 +287,10 @@ void WriteFifo(u32 a, u128 v)
     else if (a >= 0x10006000 && a < 0x10007000)
     {
         hw.gif->Transfer(2, reinterpret_cast<const u8*>(words), 1);
+    }
+    else if (a == 0x10007010)
+    {
+        IpuWriteFifo(v);
     }
     else if (Once("fifo" + std::to_string(a)))
     {
@@ -406,6 +414,10 @@ extern "C" u64 ps2_io_read64(u32 a)
 }
 extern "C" u128 ps2_io_read128(u32 a)
 {
+    if ((a & 0x1FFFFFFF) == 0x10007000)
+    {
+        return IpuReadFifo();
+    }
     return ps2_io_read64(a) | (static_cast<u128>(ps2_io_read64(a + 8)) << 64);
 }
 extern "C" void ps2_io_write8(u32 a, u8 v)

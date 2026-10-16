@@ -16,7 +16,8 @@ This is a work in progress and it still has bugs.
   including the 128-bit MMI set, the FPU and VU0 macro mode
 * `runtime/`: the EE's address space, the hardware registers, the DMA controller, a high level kernel (threads, semaphores,
   interrupts), a high level IOP (the SIF and the modules' RPC servers: files, CD, module loading, pads, memory cards) and the
-  SPU2, the sound processor (from the Crash Twinsanity native port), played through SDL3
+  SPU2, the sound processor (from the Crash Twinsanity native port), played through SDL3, and the IPU, the MPEG-2 decoder
+  for the games' movies (`runtime/src/ipu/`, with a test on a real movie in `runtime/tests/ipu/`)
 * `hw/`: the GS (drawn on the GPU with OpenGL, or in software), GIF, VIF and VU emulation from the Crash Twinsanity native port
   (see `hw/README.md`)
 * `runtime/src/ui/`: the PC menus over the game (pause, or a game's own pause menu kept; options with display, sound and
@@ -27,7 +28,6 @@ This is a work in progress and it still has bugs.
 
 ## Still to do
 
-* Movies
 * Windows and Linux
 
 ## Building
