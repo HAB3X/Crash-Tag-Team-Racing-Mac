@@ -79,6 +79,9 @@ static int g_watchCount = 0;
 // $PS2_TRACE_WATCH_SKIP=N: the first N stores are not logged (a start-up clearing the range would use up the 40);
 // $PS2_TRACE_WATCH_MAX=N: log N stores (40)
 static int g_watchSkip = -1, g_watchMax = 40;
+// The last function entries (a store's own function is among them: the shadow stack the backtrace uses is not kept)
+static uint32_t g_recentEntries[16];
+static unsigned g_recentAt = 0;
 
 void ps2_trace_store(uint32_t address, uint64_t value, int bytes)
 {
@@ -98,7 +101,10 @@ void ps2_trace_store(uint32_t address, uint64_t value, int bytes)
     }
     if (g_watchCount++ < g_watchMax)
     {
-        Ps2::Log("store %d bytes to %08x = %llx", bytes, address, static_cast<unsigned long long>(value));
+        Ps2::Log("store %d bytes to %08x = %llx; recent entries (newest first): %x %x %x %x %x %x", bytes, address,
+                 static_cast<unsigned long long>(value), g_recentEntries[(g_recentAt - 1) & 15], g_recentEntries[(g_recentAt - 2) & 15],
+                 g_recentEntries[(g_recentAt - 3) & 15], g_recentEntries[(g_recentAt - 4) & 15],
+                 g_recentEntries[(g_recentAt - 5) & 15], g_recentEntries[(g_recentAt - 6) & 15]);
         Ps2::Backtrace();
     }
 }
@@ -121,6 +127,7 @@ static int g_traceArgCount = -1;
 
 void ps2_trace_enter(uint32_t address)
 {
+    g_recentEntries[g_recentAt++ & 15] = address;
     if (g_traceArgCount < 0)
     {
         g_traceArgCount = 0;
