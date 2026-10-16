@@ -34,6 +34,7 @@ void Usage(const char* program)
             "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq,ipu]\n"
             "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--settings DIR]\n"
             "          [--press S:BUTTON[+BUTTON][:HOLD],...] [--key S:KEY[+KEY][:HOLD],...]\n"
+            "          [--control FIFO]\n"
             "          [--type S:TEXT] [--click S:X,Y] [--ui S:KEY,KEY,...]\n"
             "          [--fps] [--gs hardware|software] [--scale 1-8] [--texture-upscale 0|2|4] [--mute] [--audio-dump FILE.wav]\n"
             "          [--gs-record S:VBLANKS:FILE] [--gs-replay FILE[:PASSES]]\n",
@@ -265,6 +266,10 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
         else if (a == "--fps")
         {
             g_options.fps = true;
+        }
+        else if (a == "--control")
+        {
+            g_options.controlPath = next();
         }
         else if (a == "--watch-every")
         {
@@ -540,6 +545,10 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
     IopInit();
     SoundInit();
     IoInit();
+    if (!g_options.controlPath.empty())
+    {
+        ControlStart(g_options.controlPath);
+    }
     DmacInit();
     KernelInit(g_entryPoint, 0, {std::string("cdrom0:\\") + boot + ";1"});
     Log("starting %s at %08x", game->title, g_entryPoint);

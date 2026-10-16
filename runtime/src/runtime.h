@@ -67,6 +67,10 @@ void Log(const char* format, ...) __attribute__((format(printf, 1, 2)));
 [[noreturn]] void Fatal(const char* format, ...) __attribute__((format(printf, 1, 2)));
 // The guest's call stack (from the host's) to the log
 void Backtrace();
+// --control's commands (control.cpp): keys held from now, and a picture asked for, taken at the next vblank
+void InputLiveKeys(const std::vector<std::string>& names, double hold);
+void GsLiveSnapshot(const std::string& name);
+void ControlStart(const std::string& path);
 #ifdef PS2_TRACE_ENTER
 void TraceEnterDump();
 #endif
@@ -195,6 +199,9 @@ struct Options
     double watchEvery = 1;
     // The game's frames and the vblanks of every second to the log
     bool fps = false;
+    // A FIFO taking commands while the game runs (--control): `key NAME[+NAME] [HOLD]` (bindings.txt's names, game seconds),
+    // `snap NAME` (a picture into the snapshot folder), `quit`
+    std::string controlPath;
     // The memory cards' folders (port0, port1 in it), and the settings' (bindings.txt, graphics.txt, options.txt; --settings)
     std::string memcardDir;
     std::string settingsDir;

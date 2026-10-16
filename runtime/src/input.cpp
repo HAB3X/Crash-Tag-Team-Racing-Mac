@@ -382,10 +382,46 @@ void LoadBindings()
 std::vector<bool> g_scriptedKeys(SDL_SCANCODE_COUNT, false);
 SDL_MouseButtonFlags g_scriptedMouse = 0;
 
+// --control's keys: held until a game time
+struct LiveKey
+{
+    double until;
+    std::vector<std::string> keys;
+};
+std::mutex g_liveLock;
+std::vector<LiveKey> g_liveKeys;
+std::atomic<double> g_liveNow{0};
+
 void ScriptedKeys(double t)
 {
     std::fill(g_scriptedKeys.begin(), g_scriptedKeys.end(), false);
     g_scriptedMouse = 0;
+    g_liveNow = t;
+    {
+        std::lock_guard<std::mutex> lock(g_liveLock);
+        for (size_t i = 0; i < g_liveKeys.size();)
+        {
+            if (t >= g_liveKeys[i].until)
+            {
+                g_liveKeys.erase(g_liveKeys.begin() + static_cast<long>(i));
+                continue;
+            }
+            for (const std::string& name : g_liveKeys[i].keys)
+            {
+                int key = KeyFromName(name);
+                if (key >= MouseBase)
+                {
+                    g_scriptedMouse |= SDL_BUTTON_MASK(key - MouseBase);
+                }
+                else if (key > SDL_SCANCODE_UNKNOWN && key < SDL_SCANCODE_COUNT)
+                {
+                    g_scriptedKeys[static_cast<size_t>(key)] = true;
+                }
+                g_lastKeyboard = true;
+            }
+            i++;
+        }
+    }
     for (const Options::KeyPress& k : g_options.keys)
     {
         if (t < k.at || t >= k.at + k.hold)
@@ -412,6 +448,16 @@ void ScriptedKeys(double t)
     }
 }
 
+}
+
+void InputLiveKeys(const std::vector<std::string>& names, double hold)
+{
+    std::lock_guard<std::mutex> lock(g_liveLock);
+    g_liveKeys.push_back({g_liveNow.load() + hold, names});
+}
+
+namespace
+{
 bool Held(int key, const bool* keyboard)
 {
     if (key >= MouseBase)
@@ -643,7 +689,7 @@ void InputUpdate(double t, SDL_Window* window)
         pressed = 0;
     }
     // The keys (headless, without a window, only --key's)
-    if ((window != nullptr || !g_options.keys.empty()) && !menus)
+    if ((window != nullptr || !g_options.keys.empty() || !g_options.controlPath.empty()) && !menus)
     {
         static const bool noKeys[SDL_SCANCODE_COUNT] = {};
         const bool* keyboard = window != nullptr ? SDL_GetKeyboardState(nullptr) : noKeys;

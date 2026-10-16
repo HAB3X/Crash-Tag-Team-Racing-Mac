@@ -277,6 +277,16 @@ void GsSetCrt(u32 interlaced, u32 mode, u32 field)
     RenderCall([gs, v] { gs->smode2.value = v; });
 }
 
+// --control's snapshot requests: named pictures taken at the next vblank
+static std::mutex g_liveSnapLock;
+static std::vector<std::string> g_liveSnaps;
+
+void GsLiveSnapshot(const std::string& name)
+{
+    std::lock_guard<std::mutex> lock(g_liveSnapLock);
+    g_liveSnaps.push_back(name);
+}
+
 bool GsVblank(bool newest, bool gameThread)
 {
     u64 vblanks = ++g_vblanks;
@@ -314,6 +324,15 @@ bool GsVblank(bool newest, bool gameThread)
             names.push_back(name);
             nextAt++;
         }
+    }
+    if (!g_options.snapshotDir.empty())
+    {
+        std::lock_guard<std::mutex> lock(g_liveSnapLock);
+        for (const std::string& n : g_liveSnaps)
+        {
+            names.push_back(n);
+        }
+        g_liveSnaps.clear();
     }
     // The picture: every frame for a window or snapshots (the game's thread kept at most two pictures ahead), its pixels read
     // for a snapshot when one is due
