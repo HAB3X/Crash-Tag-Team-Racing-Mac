@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <mutex>
 #include <ctime>
 #include <vector>
 
@@ -54,6 +55,10 @@ static_assert(sizeof(Pcrtc) == 64);
 FILE* g_file = nullptr;
 u64 g_vblanksLeft = 0;
 bool g_done = false;
+// --control's record request (taken by the GS's side at its next vblank)
+std::mutex g_requestLock;
+std::string g_requestFile;
+u64 g_requestVblanks = 0;
 
 void Write(u32 kind, u32 value, const void* data, u32 quadwords)
 {
@@ -144,8 +149,26 @@ void GsRecordData(u32 path, const u8* data, u32 quadwords, bool kick)
     }
 }
 
+void GsLiveRecord(const std::string& file, u64 vblanks)
+{
+    std::lock_guard<std::mutex> lock(g_requestLock);
+    g_requestFile = file;
+    g_requestVblanks = vblanks;
+}
+
 void GsRecordVblank(Gs::Gs& gs, Ee::Gif& gif, u64 vblank)
 {
+    {
+        std::lock_guard<std::mutex> lock(g_requestLock);
+        if (!g_requestFile.empty() && g_file == nullptr)
+        {
+            g_options.gsRecordFile = g_requestFile;
+            g_options.gsRecordVblanks = g_requestVblanks;
+            g_options.gsRecordAt = 0;
+            g_requestFile.clear();
+            g_done = false;
+        }
+    }
     if (g_options.gsRecordFile.empty() || g_done)
     {
         return;

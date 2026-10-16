@@ -72,6 +72,8 @@ std::vector<std::pair<std::string, Gs::DisplayImage>> g_snapshots;
 bool g_dumpBuffer = getenv("PS2_DUMP_BUFFER") != nullptr;
 u64 g_pictureSerial = 0;
 bool g_stop = false;
+// --control's stop: ends the run as --run-seconds does, with its reports
+std::atomic<bool> g_endRun{false};
 SDL_Window* g_window = nullptr;
 
 void GsEvent(u32 address, u64 value)
@@ -285,6 +287,11 @@ void GsLiveSnapshot(const std::string& name)
 {
     std::lock_guard<std::mutex> lock(g_liveSnapLock);
     g_liveSnaps.push_back(name);
+}
+
+void GsLiveStop()
+{
+    g_endRun = true;
 }
 
 bool GsVblank(bool newest, bool gameThread)
@@ -529,7 +536,7 @@ void PresenterRun()
             Log("watch %.1f s:%s", t, line.c_str());
             nextWatch += g_options.watchEvery;
         }
-        if (g_options.runSeconds > 0 && t >= g_options.runSeconds)
+        if ((g_options.runSeconds > 0 && t >= g_options.runSeconds) || g_endRun)
         {
             Log("ran %.0f s: stopping", t);
 #ifdef PS2_TRACE_ENTER

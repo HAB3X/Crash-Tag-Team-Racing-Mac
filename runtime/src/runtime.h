@@ -70,6 +70,9 @@ void Backtrace();
 // --control's commands (control.cpp): keys held from now, and a picture asked for, taken at the next vblank
 void InputLiveKeys(const std::vector<std::string>& names, double hold);
 void GsLiveSnapshot(const std::string& name);
+void GsLiveStop();
+// Records the GS's side from the next vblank (--gs-record's, asked for while the game runs)
+void GsLiveRecord(const std::string& file, u64 vblanks);
 void ControlStart(const std::string& path);
 #ifdef PS2_TRACE_ENTER
 void TraceEnterDump();

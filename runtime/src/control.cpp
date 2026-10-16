@@ -2,7 +2,9 @@
 // ask for a snapshot, read it, decide the next). One command a line:
 //   key NAME[+NAME] [HOLD]   keys (bindings.txt's names: W, Left Shift, Mouse Left) held HOLD game seconds (0.3)
 //   snap NAME                a picture, NAME.<n>.png in the --snapshots folder, at the next vblank
-//   quit                     the runtime stops
+//   record VBLANKS FILE      --gs-record from the next vblank
+//   stop                     the run ends as --run-seconds ends it (the VU1 counts and reports are logged)
+//   quit                     the runtime stops at once
 #include "runtime.h"
 
 #include <fcntl.h>
@@ -62,6 +64,17 @@ void Handle(const std::string& line)
         std::string name;
         in >> name;
         GsLiveSnapshot(name.empty() ? "live" : name);
+    }
+    else if (command == "record")
+    {
+        u64 vblanks = 0;
+        std::string file;
+        in >> vblanks >> file;
+        GsLiveRecord(file, vblanks);
+    }
+    else if (command == "stop")
+    {
+        GsLiveStop();
     }
     else if (command == "quit")
     {
