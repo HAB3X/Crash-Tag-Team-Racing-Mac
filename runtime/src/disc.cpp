@@ -1,5 +1,7 @@
 // The disc: an ISO 9660 image read in place, from a 2048 byte .iso or a raw 2352 byte .bin (MODE1 or MODE2 form 1, named by
-// itself or by its .cue)
+// itself or by its .cue). A patch file (--patch) replaces byte ranges of the disc's data as the sectors are read, so a game's
+// files can be changed without a modified copy of the image: "DPAT", u32 1, u32 count, then count times u64 offset (in the
+// image's 2048 byte sectors' data, sector * 2048 + byte), u32 length, the bytes
 #include "runtime.h"
 
 #include <algorithm>
@@ -18,6 +20,13 @@ u32 g_dataOffset = 0;
 u32 g_rootLsn = 0;
 u32 g_rootSize = 0;
 bool g_dvd = false;
+
+struct Patch
+{
+    u64 offset;
+    std::vector<u8> bytes;
+};
+std::vector<Patch> g_patches;
 
 struct Entry
 {
@@ -142,6 +151,38 @@ bool DiscOpen(const std::string& path)
     return true;
 }
 
+bool DiscLoadPatch(const std::string& path)
+{
+    std::ifstream f(path, std::ios::binary);
+    u32 head[3];
+    if (!f.read(reinterpret_cast<char*>(head), 12) || head[0] != 0x54415044 /* "DPAT" */ || head[1] != 1)
+    {
+        Log("--patch %s: not a disc patch file", path.c_str());
+        return false;
+    }
+    u64 bytes = 0;
+    for (u32 i = 0; i < head[2]; i++)
+    {
+        Patch p;
+        u32 length;
+        if (!f.read(reinterpret_cast<char*>(&p.offset), 8) || !f.read(reinterpret_cast<char*>(&length), 4))
+        {
+            Log("--patch %s: cut short at entry %u", path.c_str(), i);
+            return false;
+        }
+        p.bytes.resize(length);
+        if (!f.read(reinterpret_cast<char*>(p.bytes.data()), length))
+        {
+            Log("--patch %s: cut short at entry %u", path.c_str(), i);
+            return false;
+        }
+        bytes += length;
+        g_patches.push_back(std::move(p));
+    }
+    Log("patch %s: %u ranges, %llu bytes", path.c_str(), head[2], static_cast<unsigned long long>(bytes));
+    return true;
+}
+
 bool DiscIsDvd() { return g_dvd; }
 
 bool DiscFind(const std::string& path, u32& lsn, u32& size)
@@ -196,7 +237,20 @@ bool DiscFind(const std::string& path, u32& lsn, u32& size)
 bool DiscReadSectors(u32 lsn, u32 count, u8* out)
 {
     std::lock_guard<std::mutex> lock(g_discLock);
-    return ReadRaw(lsn, count, out);
+    if (!ReadRaw(lsn, count, out))
+    {
+        return false;
+    }
+    const u64 start = static_cast<u64>(lsn) * 2048, end = start + static_cast<u64>(count) * 2048;
+    for (const Patch& p : g_patches)
+    {
+        const u64 from = std::max(start, p.offset), to = std::min(end, p.offset + p.bytes.size());
+        if (from < to)
+        {
+            std::memcpy(out + (from - start), p.bytes.data() + (from - p.offset), to - from);
+        }
+    }
+    return true;
 }
 
 bool DiscReadFile(const std::string& path, std::vector<u8>& out)

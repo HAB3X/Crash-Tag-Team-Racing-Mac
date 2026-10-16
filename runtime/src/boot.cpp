@@ -34,7 +34,7 @@ void Usage(const char* program)
             "          [--run-seconds S] [--log kernel,syscall,io,dma,sif,iop,gs,call,thread,irq,ipu]\n"
             "          [--watch ADDR[:WORDS],... [--watch-every S]] [--memcards DIR] [--settings DIR]\n"
             "          [--press S:BUTTON[+BUTTON][:HOLD],...] [--key S:KEY[+KEY][:HOLD],...]\n"
-            "          [--control FIFO]\n"
+            "          [--control FIFO] [--patch FILE]\n"
             "          [--type S:TEXT] [--click S:X,Y] [--ui S:KEY,KEY,...]\n"
             "          [--fps] [--gs hardware|software] [--scale 1-8] [--texture-upscale 0|2|4] [--mute] [--audio-dump FILE.wav]\n"
             "          [--gs-record S:VBLANKS:FILE] [--gs-replay FILE[:PASSES]]\n",
@@ -172,6 +172,10 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
         if (a == "--disc")
         {
             g_options.disc = next();
+        }
+        else if (a == "--patch")
+        {
+            g_options.patch = next();
         }
         else if (a == "--headless")
         {
@@ -463,6 +467,10 @@ int ps2_main(int argc, char** argv, const Ps2GameInfo* game)
     if (!DiscOpen(g_options.disc))
     {
         WrongDisc(game, asked, discFile);
+        return 1;
+    }
+    if (!g_options.patch.empty() && !DiscLoadPatch(g_options.patch))
+    {
         return 1;
     }
     std::vector<u8> cnf;
