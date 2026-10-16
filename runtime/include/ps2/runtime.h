@@ -70,7 +70,7 @@ typedef struct Ps2GameInfo
     // Optional. The settings folder's name in ~/Library/Application Support (the saves, the options, the disc's path);
     // NULL: "PS2 Native Runtime/<executable>"
     const char* folder;
-    // Optional. Nonzero: the game's own pause menu is kept. The menu key (Escape) is then Start, a gamepad's Back is Select,
+    // Optional. Nonzero: the game's own pause menu is kept. The menu key (Escape) is then Start (a game with controls of its own has none: it binds Escape itself), F10 opens the PC options, a gamepad's Back is Select,
     // and the PC menus have no pause menu of their own: their Options (with an Extras tab for the game's Extras and Pause
     // actions) open when the game asks (ps2_open_settings, e.g. from a line of its own options menu), and going back from them
     // goes back to the game

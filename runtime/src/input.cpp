@@ -178,7 +178,12 @@ std::vector<Action> MakeActions()
 {
     if (GameControls())
     {
-        std::vector<Action> actions{MenuAction()};
+        // A game with its own pause menu has no menu key of the runtime's: Escape is the game's to bind, in each mode
+        std::vector<Action> actions;
+        if (g_game->ownPause == 0)
+        {
+            actions.push_back(MenuAction());
+        }
         for (int n = 0; n < g_game->controlCount; n++)
         {
             actions.push_back(GameAction(g_game->controls[n]));
@@ -789,6 +794,13 @@ void InputUpdate(double t, SDL_Window* window)
     bool remap = g_menu && !GameControls();
     // The PC menus up: the game gets nothing (it's paused); what's held as they close waits to be let go
     bool menus = Ui::MenusOpen();
+    // A game that says when a menu is up has the mouse pointer over its menus only (hidden in play)
+    static int pointerShown = -1;
+    if (window != nullptr && g_game != nullptr && g_game->menu != nullptr && pointerShown != (menus || g_menu ? 1 : 0))
+    {
+        pointerShown = menus || g_menu ? 1 : 0;
+        pointerShown != 0 ? SDL_ShowCursor() : SDL_HideCursor();
+    }
     if (window != nullptr && (menus || g_ignoreAll))
     {
         InputIgnoreHeld();

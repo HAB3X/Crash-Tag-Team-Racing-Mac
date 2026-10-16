@@ -684,6 +684,11 @@ void DisplayPresent(const Gs::DisplayImage* image, bool redraw, SDL_FRect* pictu
 {
     if (g_window == nullptr || g_options.headless)
     {
+        // A headless run's hidden window (--ui, --control's events) has the picture over all of it
+        if (g_window != nullptr && pictureRect != nullptr)
+        {
+            *pictureRect = {0, 0, 1280, 960};
+        }
         return;
     }
     Gl& gl = GetGl();
