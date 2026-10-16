@@ -338,8 +338,10 @@ s32 SetFileInfo(u32 port, const std::string& name, u32 flags, u32 info)
     {
         return ResNoEntry;
     }
-    // Bit 2: a new name (the table's at 32); the attributes and times (bits 0 and 1) are the host's
-    if ((flags & 4) && info != 0)
+    // 0x10 (sceMcFileInfoName): a new name, the table's at 32; the times (0x01, 0x02) and the attributes (0x04) are the host's.
+    // A game saving safely writes its icon.sys as ~icon.sys and renames it last (CTTR does): a save whose rename is lost is
+    // one the game calls damaged
+    if ((flags & 0x10) && info != 0)
     {
         std::string to(reinterpret_cast<const char*>(Host((info + 32) & 0x1FFFFFF)), 0, 31);
         to = to.c_str();
@@ -528,8 +530,13 @@ void McServ(RpcCall& c)
         return;
     }
     case 0x0E: // set file info: port 0, flags 8, the EE's table 16, name 20
-        Answer(c, CardIn(port) ? SetFileInfo(port, c.InString(20, 1024), c.In32(8), c.In32(16)) : ResNoCard);
+    {
+        std::string name = c.InString(20, 1024);
+        s32 r = CardIn(port) ? SetFileInfo(port, name, c.In32(8), c.In32(16)) : ResNoCard;
+        PS2_LOG(LogIop, "mc setfileinfo %u:%s flags %#x: %d", port, name.c_str(), c.In32(8), r);
+        Answer(c, r);
         return;
+    }
     case 0x0F: // delete: port 0, name 20
     {
         std::string name = c.InString(20, 1024);

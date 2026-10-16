@@ -22,6 +22,13 @@ void PagesOfRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bott
 // The pages a rectangle covers whole (every byte of them in it)
 void FullPagesOfRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bottom, PageSet& pages);
 
+// Local memory's 256 byte blocks: a pixel's, and those a rectangle (inclusive corners, in pixels of the format) covers whole.
+// A rectangle written in one format and read in another (an 8 bit texture uploaded as 32 bit pixels, a CLUT) meets the same
+// bytes where their blocks are the same; every format's block is a whole number of 8x8 cells
+using BlockSet = std::bitset<BlockCount>;
+u32 PixelBlock(u32 psm, u32 x, u32 y, u32 bp, u32 bw);
+void WholeBlocksOfRect(u32 psm, u32 bp, u32 bw, s32 left, s32 top, s32 right, s32 bottom, BlockSet& blocks);
+
 // The pages a primitive's texture decode reads (the levels' regions its texture coordinates reach, or whole levels), and the
 // region of the first level its coordinates reach (false: any of it)
 void TexturePagesForDraw(const Gs::DrawState& state, const Vertex* vertexes, u32 count, PageSet& pages);

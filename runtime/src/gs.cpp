@@ -525,6 +525,7 @@ void PresenterRun()
                 vs.verifiedRuns != 0 ? (", " + std::to_string(vs.verifiedRuns) + " runs verified, " +
                                         std::to_string(vs.differences) + " differences").c_str()
                                      : "");
+            Ee::ReportVu1();
             KernelDumpThreads();
             break;
         }

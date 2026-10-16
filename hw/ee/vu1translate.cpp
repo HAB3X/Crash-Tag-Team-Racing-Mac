@@ -892,6 +892,37 @@ void LeaveTranslation(Vu& vu, VuMicroState& st, const Slots& slots, const Signat
 }
 }
 
+namespace
+{
+// The reports $PS2_VU1_PROFILE and $PS2_VU1_STATS ask for, made once: at exit, or when the host asks first (a host that ends
+// with _exit runs no atexit handlers)
+std::vector<void (*)()>& Vu1Reports()
+{
+    static std::vector<void (*)()> reports;
+    return reports;
+}
+
+void AddVu1Report(void (*report)())
+{
+    if (Vu1Reports().empty())
+    {
+        std::atexit(ReportVu1);
+    }
+
+    Vu1Reports().push_back(report);
+}
+}
+
+void ReportVu1()
+{
+    std::vector<void (*)()> reports;
+    reports.swap(Vu1Reports());
+    for (auto report : reports)
+    {
+        report();
+    }
+}
+
 void AttachVu1Translation(Vu& vu1)
 {
     const char* setting = std::getenv("PS2_VU1");
@@ -901,7 +932,7 @@ void AttachVu1Translation(Vu& vu1)
     {
         g_Misses = new std::unordered_map<MissKey, u64, MissHash>();
         g_MissSignatures = new std::unordered_map<std::string, u64>();
-        std::atexit([] {
+        AddVu1Report([] {
             std::vector<std::pair<MissKey, u64>> misses(g_Misses->begin(), g_Misses->end());
             std::sort(misses.begin(), misses.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
             std::fprintf(stderr, "vu1 profile: %llu translated, %llu interpreted instructions; ms in entering %.1f, translated "
@@ -910,7 +941,7 @@ void AttachVu1Translation(Vu& vu1)
                          static_cast<unsigned long long>(g_Stats.interpretedInstructions), g_Times.enter / 1e6,
                          g_Times.code / 1e6, g_Times.next / 1e6, g_Times.leave / 1e6, g_Times.interpret / 1e6);
             std::fprintf(stderr, "vu1 profile: the interpreter's steps by where the dispatcher found nothing:\n");
-            for (size_t n = 0; n < misses.size() && n < 40; n++)
+            for (size_t n = 0; n < misses.size() && n < 400; n++)
             {
                 std::fprintf(stderr, "  %10llu  program %d offset %#x: %s\n", static_cast<unsigned long long>(misses[n].second),
                              misses[n].first.program, misses[n].first.offset, MissReasons[misses[n].first.reason]);
@@ -918,7 +949,7 @@ void AttachVu1Translation(Vu& vu1)
 
             std::vector<std::pair<std::string, u64>> sigs(g_MissSignatures->begin(), g_MissSignatures->end());
             std::sort(sigs.begin(), sigs.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
-            for (size_t n = 0; n < sigs.size() && n < 30; n++)
+            for (size_t n = 0; n < sigs.size() && n < 60; n++)
             {
                 std::fprintf(stderr, "  %10llu %s\n", static_cast<unsigned long long>(sigs[n].second), sigs[n].first.c_str());
             }
@@ -930,7 +961,7 @@ void AttachVu1Translation(Vu& vu1)
         // At exit: VU1's time in its programs less XGKICK's packets (the GIF and the GS), and how much of it ran translated
         vu1.timing = true;
         static Vu* timed = &vu1;
-        std::atexit([] {
+        AddVu1Report([] {
             std::fprintf(stderr, "vu1 stats: %.2f ms in programs (less XGKICKs' %.2f ms of GIF and GS), %llu instructions "
                                  "translated, %llu interpreted, %llu entries into translated code\n",
                          (timed->runNanoseconds - timed->kickNanoseconds) / 1e6, timed->kickNanoseconds / 1e6,
