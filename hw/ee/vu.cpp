@@ -132,6 +132,10 @@ enum class Lower : u8
     Unknown,
 };
 
+static_assert(static_cast<int>(Lower::Eexp) - static_cast<int>(Lower::Esadd) == static_cast<int>(EfuOp::Eexp) &&
+                  static_cast<int>(Lower::Ersqrt) - static_cast<int>(Lower::Esadd) == static_cast<int>(EfuOp::Ersqrt),
+              "the EFU's lower instructions are in EfuOp's order");
+
 enum class Pipe : u8
 {
     None,
@@ -1119,6 +1123,112 @@ f32 Eatan(f32 x)
     result += Constants[8];
     return VuFloat(AsBits(result));
 }
+}
+
+u32 EfuResult(EfuOp op, const u32 fs[4], u32 fsf)
+{
+    switch (op)
+    {
+    case EfuOp::Esadd:
+    case EfuOp::Ersadd:
+    case EfuOp::Eleng:
+    case EfuOp::Erleng:
+    {
+        f32 sum = VuFloat(fs[0]) * VuFloat(fs[0]) + VuFloat(fs[1]) * VuFloat(fs[1]) + VuFloat(fs[2]) * VuFloat(fs[2]);
+        if (op == EfuOp::Ersadd)
+        {
+            if (sum != 0.0f)
+            {
+                sum = 1.0f / sum;
+            }
+        }
+        else if (op == EfuOp::Eleng)
+        {
+            if (sum >= 0.0f)
+            {
+                sum = std::sqrt(sum);
+            }
+        }
+        else if (op == EfuOp::Erleng)
+        {
+            if (sum >= 0.0f)
+            {
+                sum = std::sqrt(sum);
+                if (sum != 0.0f)
+                {
+                    sum = 1.0f / sum;
+                }
+            }
+        }
+
+        return AsBits(sum);
+    }
+    case EfuOp::Eatanxy:
+    case EfuOp::Eatanxz:
+    {
+        f32 x = VuFloat(fs[0]);
+        f32 value = 0.0f;
+        if (x != 0.0f)
+        {
+            value = Eatan(VuFloat(fs[op == EfuOp::Eatanxy ? 1 : 2]) / x);
+        }
+
+        return AsBits(value);
+    }
+    case EfuOp::Esum:
+        return AsBits(VuFloat(fs[0]) + VuFloat(fs[1]) + VuFloat(fs[2]) + VuFloat(fs[3]));
+    case EfuOp::Ercpr:
+    {
+        f32 value = VuFloat(fs[fsf]);
+        if (value != 0.0f)
+        {
+            value = static_cast<f32>(1.0 / value);
+        }
+
+        return AsBits(value);
+    }
+    case EfuOp::Esqrt:
+    case EfuOp::Ersqrt:
+    {
+        f32 value = VuFloat(fs[fsf]);
+        if (value >= 0.0f)
+        {
+            value = std::sqrt(value);
+            if (op == EfuOp::Ersqrt && value != 0.0f)
+            {
+                value = 1.0f / value;
+            }
+        }
+
+        return AsBits(value);
+    }
+    case EfuOp::Esin:
+    {
+        static const f32 Constants[5] = {1.0f, -0.166666567325592f, 0.008333025500178f, -0.000198074136279f,
+                                         0.000002601886990f};
+        f32 x = VuFloat(fs[fsf]);
+        f32 value = static_cast<f32>((Constants[0] * x) + (Constants[1] * std::pow(x, 3)) + (Constants[2] * std::pow(x, 5)) +
+                                     (Constants[3] * std::pow(x, 7)) + (Constants[4] * std::pow(x, 9)));
+        return AsBits(VuFloat(AsBits(value)));
+    }
+    case EfuOp::Eatan:
+        return AsBits(Eatan(VuFloat(fs[fsf])));
+    case EfuOp::Eexp:
+    {
+        static const f32 Constants[6] = {0.249998688697815f, 0.031257584691048f, 0.002591371303424f,
+                                         0.000171562001924f, 0.000005430199963f, 0.000000690600018f};
+        f32 x = VuFloat(fs[fsf]);
+        f32 value = static_cast<f32>(1.0f + (Constants[0] * x) + (Constants[1] * std::pow(x, 2)) +
+                                     (Constants[2] * std::pow(x, 3)) + (Constants[3] * std::pow(x, 4)) +
+                                     (Constants[4] * std::pow(x, 5)) + (Constants[5] * std::pow(x, 6)));
+        value = static_cast<f32>(std::pow(value, 4));
+        value = VuFloat(AsBits(value));
+        value = 1.0f / value;
+        return AsBits(value);
+    }
+    }
+
+    return 0;
 }
 
 namespace
@@ -2248,114 +2358,18 @@ bool Vu::StepMicro(VuMicroState& state)
             case Lower::Ersadd:
             case Lower::Eleng:
             case Lower::Erleng:
-            {
-                const Vf& fs = vf[d.lfs];
-                f32 sum = VuFloat(fs.u[0]) * VuFloat(fs.u[0]) + VuFloat(fs.u[1]) * VuFloat(fs.u[1]) +
-                          VuFloat(fs.u[2]) * VuFloat(fs.u[2]);
-                if (d.lower == Lower::Ersadd)
-                {
-                    if (sum != 0.0f)
-                    {
-                        sum = 1.0f / sum;
-                    }
-                }
-                else if (d.lower == Lower::Eleng)
-                {
-                    if (sum >= 0.0f)
-                    {
-                        sum = std::sqrt(sum);
-                    }
-                }
-                else if (d.lower == Lower::Erleng)
-                {
-                    if (sum >= 0.0f)
-                    {
-                        sum = std::sqrt(sum);
-                        if (sum != 0.0f)
-                        {
-                            sum = 1.0f / sum;
-                        }
-                    }
-                }
-
-                pending.p = AsBits(sum);
-                break;
-            }
             case Lower::Eatanxy:
             case Lower::Eatanxz:
-            {
-                const Vf& fs = vf[d.lfs];
-                f32 x = VuFloat(fs.u[0]);
-                f32 value = 0.0f;
-                if (x != 0.0f)
-                {
-                    value = Eatan(VuFloat(fs.u[d.lower == Lower::Eatanxy ? 1 : 2]) / x);
-                }
-
-                pending.p = AsBits(value);
-                break;
-            }
             case Lower::Esum:
-            {
-                const Vf& fs = vf[d.lfs];
-                pending.p = AsBits(VuFloat(fs.u[0]) + VuFloat(fs.u[1]) + VuFloat(fs.u[2]) + VuFloat(fs.u[3]));
-                break;
-            }
             case Lower::Ercpr:
-            {
-                f32 value = VuFloat(vf[d.lfs].u[d.fsf]);
-                if (value != 0.0f)
-                {
-                    value = static_cast<f32>(1.0 / value);
-                }
-
-                pending.p = AsBits(value);
-                break;
-            }
             case Lower::Esqrt:
             case Lower::Ersqrt:
-            {
-                f32 value = VuFloat(vf[d.lfs].u[d.fsf]);
-                if (value >= 0.0f)
-                {
-                    value = std::sqrt(value);
-                    if (d.lower == Lower::Ersqrt && value != 0.0f)
-                    {
-                        value = 1.0f / value;
-                    }
-                }
-
-                pending.p = AsBits(value);
-                break;
-            }
             case Lower::Esin:
-            {
-                static const f32 Constants[5] = {1.0f, -0.166666567325592f, 0.008333025500178f, -0.000198074136279f,
-                                                 0.000002601886990f};
-                f32 x = VuFloat(vf[d.lfs].u[d.fsf]);
-                f32 value = static_cast<f32>((Constants[0] * x) + (Constants[1] * std::pow(x, 3)) +
-                                             (Constants[2] * std::pow(x, 5)) + (Constants[3] * std::pow(x, 7)) +
-                                             (Constants[4] * std::pow(x, 9)));
-                pending.p = AsBits(VuFloat(AsBits(value)));
-                break;
-            }
             case Lower::Eatan:
-                pending.p = AsBits(Eatan(VuFloat(vf[d.lfs].u[d.fsf])));
-                break;
             case Lower::Eexp:
-            {
-                static const f32 Constants[6] = {0.249998688697815f, 0.031257584691048f, 0.002591371303424f,
-                                                 0.000171562001924f, 0.000005430199963f, 0.000000690600018f};
-                f32 x = VuFloat(vf[d.lfs].u[d.fsf]);
-                f32 value = static_cast<f32>(1.0f + (Constants[0] * x) + (Constants[1] * std::pow(x, 2)) +
-                                             (Constants[2] * std::pow(x, 3)) + (Constants[3] * std::pow(x, 4)) +
-                                             (Constants[4] * std::pow(x, 5)) + (Constants[5] * std::pow(x, 6)));
-                value = static_cast<f32>(std::pow(value, 4));
-                value = VuFloat(AsBits(value));
-                value = 1.0f / value;
-                pending.p = AsBits(value);
+                pending.p = EfuResult(static_cast<EfuOp>(static_cast<int>(d.lower) - static_cast<int>(Lower::Esadd)),
+                                      vf[d.lfs].u, d.fsf);
                 break;
-            }
             }
 
             if (d.lowerPipe == Pipe::Efu && d.lower != Lower::Waitp)

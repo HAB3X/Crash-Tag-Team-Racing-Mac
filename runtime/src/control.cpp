@@ -7,8 +7,10 @@
 //   pads                     the presses the pad server took and the frames showed (--log input has each)
 //   snap NAME                a picture, NAME.<n>.png in the --snapshots folder, at the next vblank
 //   peek ADDR [WORDS]        guest words (hex address) to the log
-//   dump FILE                the guest's 32 MB of main memory to FILE
-//   quit                     the runtime stops
+//   ram FILE                 the 32 MB of main memory written to FILE (to look for what the game loaded: texts, tables)
+//   record VBLANKS FILE      --gs-record from the next vblank
+//   stop                     the run ends as --run-seconds ends it (the VU1 counts and reports are logged)
+//   quit                     the runtime stops at once
 #include "runtime.h"
 
 #include "ps2/runtime.h"
@@ -118,20 +120,30 @@ void Handle(const std::string& line)
         }
         Log("peek %08x:%s", at, line.c_str());
     }
-    else if (command == "dump")
+    else if (command == "ram" || command == "dump")
     {
         std::string file;
         in >> file;
         FILE* f = fopen(file.c_str(), "wb");
-        if (f == nullptr)
+        if (!f || fwrite(Ram(), 1, 32u << 20, f) != (32u << 20))
         {
-            Log("--control: cannot write %s", file.c_str());
+            Log("--control: cannot write main memory to %s", file.c_str());
         }
-        else
+        if (f)
         {
-            fwrite(Host(0), 1, 32u << 20, f);
             fclose(f);
         }
+    }
+    else if (command == "record")
+    {
+        u64 vblanks = 0;
+        std::string file;
+        in >> vblanks >> file;
+        GsLiveRecord(file, vblanks);
+    }
+    else if (command == "stop")
+    {
+        GsLiveStop();
     }
     else if (command == "quit")
     {

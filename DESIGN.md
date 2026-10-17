@@ -337,6 +337,15 @@ line on every other field with XYOFFSET (the SDK's sceGsSetHalfOffset), for a TV
 Shown one field after another in the same place, the picture shook by half a line at 30 Hz: the GS drops that half line
 (`Gs::steadyFields`), so both fields are drawn alike. `PS2_STEADY_FIELDS=0` keeps it.
 
+A frame mask that keeps part of a channel (Biohazard Outbreak masks the red's lowest bit, FBMSK 1, for all its 3D) makes every
+primitive a shader blend on a copy of the destination, and each copy is a render pass change that the OpenGL-on-Metal driver
+submits as a command buffer: a mesh was 2 submits a triangle. A batch of such primitives now breaks only where two can draw
+the same pixel, and triangles that share an edge (a mesh's) or are clear of each other don't (`ShapesOverlap`: a separating edge
+of either, a quarter pixel clear unless the corner is the edge's own end), where it broke wherever their rectangles met. The
+Training Ground's recording drew 4.7 times faster and the loading screen 5.6 times, every picture's hash the same. What is left
+(overlapping foliage, glyphs and their shadows) needs the destination read per primitive: a Metal renderer's programmable
+blending, not OpenGL's copies. A blit in place of the copy's draw was no faster.
+
 ### The render thread
 
 The GS's side (the GIF's paths, the GS's registers, local memory, drawing and the PCRTC's picture) runs on a thread of its
@@ -367,6 +376,12 @@ park (10 frames a second to 30). FCSET is translated (its clip flag through the 
 the E bit (the run ends after its delay slot; the next starts where it branched, an entry of its own). A block has up to 64
 variants: CTTR's main program's loops settle at 49 pipeline states, and with 32 the rest ran interpreted (its park's
 instructions 98.5% translated then, 99.3% now).
+
+EFU instructions (ERSQRT, ERLENG and the rest, MFP, WAITP) are translated too: P and the result in flight (its ready cycle,
+like the division's) are part of the signature, and the math is `EfuResult` (vu.cpp), the interpreter's own function, so the two
+can't differ. Biohazard Outbreak's vertex programs have them in their loops; with the EFU left to the interpreter every block
+after one ran interpreted (the loading screen's model drew at 3 frames a second; its 29 programs now run 100% translated:
+4.1 billion instructions, 1.8 million runs checked with `PS2_VU1=verify`, no differences).
 
 ### Controllers and memory cards
 
@@ -467,6 +482,8 @@ second (also the window's title); `--log` turns on the channels' logs; `--audio-
 vblank period in which the game presented a picture: an enabled circuit's DISPFB changed (WoC flips between two buffers) or
 something was drawn or transferred into the buffer shown (CTTR copies each finished picture into one display buffer it
 never moves, which DISPFB alone counted as no frames at all). It's counted on the GS's side, in order with what the game sent.
+
+`--control`'s `record N FILE` records from the next vblank and `stop` ends the run as `--run-seconds` does (the VU1 counts and reports are logged).
 
 `--gs-record S:N:FILE` records the GS's side for N vblanks from the game's S-th second: the GS's and the GIF's state (local
 memory made current from the GPU first), then the GIF's data and VU1's kicks in order and the PCRTC's registers at each vblank
