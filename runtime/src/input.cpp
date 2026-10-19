@@ -641,6 +641,22 @@ void InputLiveButton(const std::string& name, bool down, bool up)
     }
 }
 
+// The mouse moving a stick (Ps2GameInfo::mouseStick): its motion since the last update (the window's relative mode's, or
+// --control's move) and the up and down it has been moved to while it does
+static float g_mouseDx = 0, g_mouseDy = 0;
+static float g_mouseAim = 0;
+static bool g_mouseCaptured = false;
+// Full deflection across at this many pixels of motion in an update (a 60th of a second); up and down at this many in all
+constexpr float MouseTurnPixels = 12.0f;
+constexpr float MouseAimPixels = 120.0f;
+
+void InputLiveMove(float dx, float dy)
+{
+    std::lock_guard<std::mutex> lock(g_typedLock);
+    g_mouseDx += dx;
+    g_mouseDy += dy;
+}
+
 void InputLiveMouse(float x, float y)
 {
     SDL_FRect picture;
@@ -684,6 +700,11 @@ void InputEvent(const SDL_Event& e)
             g_mouseX = x;
             g_mouseY = y;
             g_mouseMoved = true;
+            if (g_mouseCaptured)
+            {
+                g_mouseDx += e.motion.xrel;
+                g_mouseDy += e.motion.yrel;
+            }
         }
         else if (g_menu && x >= 0 && x < 1 && y >= 0 && y < 1)
         {
@@ -884,6 +905,33 @@ void InputUpdate(double t, SDL_Window* window)
             g_walking = !g_walking;
         }
         g_walkHeld = walkHeld;
+    }
+    // The mouse moving a stick while the game asks (not with the PC menus or a game's menu up)
+    int mouseStick = g_game != nullptr && g_game->mouseStick != nullptr && !menus && !g_menu ? g_game->mouseStick(pressed) : 0;
+    if ((mouseStick != 0) != g_mouseCaptured)
+    {
+        g_mouseCaptured = mouseStick != 0;
+        if (window != nullptr)
+        {
+            SDL_SetWindowRelativeMouseMode(window, g_mouseCaptured);
+        }
+        std::lock_guard<std::mutex> lock(g_typedLock);
+        g_mouseDx = g_mouseDy = 0;
+        g_mouseAim = 0;
+    }
+    if (mouseStick == 1 || mouseStick == 2)
+    {
+        float dx, dy;
+        {
+            std::lock_guard<std::mutex> lock(g_typedLock);
+            dx = g_mouseDx;
+            dy = g_mouseDy;
+            g_mouseDx = g_mouseDy = 0;
+        }
+        g_mouseAim = std::clamp(g_mouseAim + dy / MouseAimPixels, -1.0f, 1.0f);
+        int s = mouseStick == 1 ? 0 : 1;
+        sticks[s][0] += std::clamp(dx / MouseTurnPixels, -1.0f, 1.0f);
+        sticks[s][1] += g_mouseAim;
     }
     // A stick from keys: a diagonal is a stick's (both axes at 1/sqrt(2)), walking at half
     u8 out[4] = {0x80, 0x80, 0x80, 0x80}; // right x, right y, left x, left y

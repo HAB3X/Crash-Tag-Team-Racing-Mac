@@ -85,6 +85,12 @@ typedef struct Ps2GameInfo
     const char* const* modes;
     int modeCount;
     int (*mode)(void);
+    // Optional. Which stick the mouse moves now (0 none, 1 the left, 2 the right), given the PS2 buttons the player is pressing
+    // this update: the pointer is captured while it does (the window's relative mouse mode) and the mouse's motion moves that
+    // stick beside the keys, across by its speed (a turn as fast as the mouse moves) and up and down by where it was moved to
+    // (an aim held high until the mouse comes back down). A game whose aiming is a stick held with a button (the PC releases
+    // of Resident Evil 4 and 5 aim with the mouse)
+    int (*mouseStick)(uint32_t pressed);
 } Ps2GameInfo;
 
 // A prompt shown over the picture near its bottom (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down

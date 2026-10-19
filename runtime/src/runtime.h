@@ -75,6 +75,8 @@ void InputLiveKeys(const std::vector<std::string>& names, double hold);
 void InputLiveButton(const std::string& name, bool down, bool up);
 void InputLiveMouse(float x, float y);
 void InputLiveWheel(float lines);
+// --control move: the mouse moved by this much (pixels), as the relative mode reports it while a game has the mouse on a stick
+void InputLiveMove(float dx, float dy);
 void GsLiveSnapshot(const std::string& name);
 void GsLiveStop();
 // Records the GS's side from the next vblank (--gs-record's, asked for while the game runs)

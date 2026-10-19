@@ -83,6 +83,12 @@ void Handle(const std::string& line)
         in >> x >> y;
         InputLiveMouse(x, y);
     }
+    else if (command == "move")
+    {
+        float dx = 0, dy = 0;
+        in >> dx >> dy;
+        InputLiveMove(dx, dy);
+    }
     else if (command == "wheel")
     {
         float lines = 0;
