@@ -1,12 +1,12 @@
 // Port 0's controller from the host: the keyboard and mouse (the PC controls, rebindable in bindings.txt), the first gamepad
 // SDL finds, and the presses asked for with --press. Read on the presenter's thread, given to the pad server (iop/padman.cpp).
 //
-// The keyboard and mouse defaults are the Crash Twinsanity native port's: W A S D move (the left stick, a diagonal as a stick's
-// diagonal), Space jumps (cross), the mouse's left button or J spins (square), Left Shift or K crouches and slides (circle),
-// Tab or I is triangle, Z and C the left and right shoulders, Return pauses (start), Left Ctrl toggles walking (the stick at
-// half), and Q and E turn the right stick. The arrows are the d-pad (WoC's menus read it). Escape opens the PC menus (ui/), as
-// a gamepad's Back button does unless it's set to be Select. Every key can be changed in the PC menus' Controls or in the
-// settings folder's bindings.txt, which is written with the defaults the first time; a key of the PC menus' is only theirs.
+// The keyboard and mouse defaults are the Crash Twinsanity native port's: W A S D move (the left stick, a diagonal its corner,
+// both axes full), Space jumps (cross), the mouse's left button or J spins (square), Left Shift or K crouches and slides
+// (circle), Tab or I is triangle, Z and C the left and right shoulders, Return pauses (start), Left Ctrl toggles walking (the
+// stick at half), and Q and E turn the right stick. The arrows are the d-pad (WoC's menus read it). Escape opens the PC menus
+// (ui/), as a gamepad's Back button does unless it's set to be Select. Every key can be changed in the PC menus' Controls or in
+// the settings folder's bindings.txt, which is written with the defaults the first time; a key of the PC menus' is only theirs.
 //
 // While the PC menus are up the game is paused and gets nothing; what was held as they closed counts again only once it's let
 // go (the Return that chose Resume doesn't pause the game).
@@ -763,17 +763,12 @@ void InputUpdate(double t, SDL_Window* window)
         }
         g_walkHeld = walkHeld;
     }
-    // A stick from keys: a diagonal is a stick's (both axes at 1/sqrt(2)), walking at half
+    // A stick from keys: a diagonal is both axes at full, as a PS2 stick pushed into its corner reads (and PCSX2's keys give):
+    // scaled to the circle (both at 1/sqrt(2)) games take it for a stick half pushed, CTTR's Crash walking. Walking at half
     u8 out[4] = {0x80, 0x80, 0x80, 0x80}; // right x, right y, left x, left y
     for (int s = 0; s < 2; s++)
     {
         float x = std::clamp(sticks[s][0], -1.0f, 1.0f), y = std::clamp(sticks[s][1], -1.0f, 1.0f);
-        float length = std::sqrt(x * x + y * y);
-        if (length > 1.0f)
-        {
-            x /= length;
-            y /= length;
-        }
         if (s == 0 && g_walking)
         {
             x *= 0.5f;
