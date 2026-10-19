@@ -191,6 +191,7 @@ void PresenterStop();
 struct Options
 {
     std::string disc;
+    std::string patch;          // --patch FILE: byte ranges laid over the disc (disc.cpp)
     bool headless = false;
     std::string snapshotDir;
     double snapshotEvery = 0;   // seconds of game time (vblanks / 59.94) between saved pictures (0: none); --snapshot-at too
@@ -350,6 +351,8 @@ std::string InputPrompt();
 
 // --- disc.cpp
 bool DiscOpen(const std::string& path);
+// A patch file's byte ranges laid over the disc's sectors from now on (see disc.cpp; --patch)
+bool DiscLoadPatch(const std::string& path);
 // Whether the disc is a DVD (UDF's volume recognition on it, as a PlayStation 2 DVD has), not a CD
 bool DiscIsDvd();
 // A file on the disc by its ISO 9660 path ("\\SYS\\LIBSD.IRX;1" or "/SYS/LIBSD.IRX"): its first sector and size
