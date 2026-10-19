@@ -190,6 +190,15 @@ class Program:
             t += 4
         return targets
 
+    def after_padding(self, a):
+        """The first code after the zero words at a (up to 16), or None when a isn't padding or nothing follows it"""
+        if self.words[(a - self.text_start) // 4] != 0:
+            return None
+        for b in range(a + 4, min(a + 68, self.text_end), 4):
+            if self.in_text(b) and self.words[(b - self.text_start) // 4] != 0:
+                return b
+        return None
+
     def decodes(self, a):
         """Whether everything that would run from a decodes: if not, a is data kept in the text, not a function. Followed to
         the end of the text, not of a region, as how far a region goes depends on the starts found so far."""
@@ -322,6 +331,10 @@ class Program:
         pointers = {p for p in pointers if p in called or self.decodes(p)}
         starts = {s for s in starts if self.in_text(s)} - not_starts
         starts |= pointers
+        # A start on zero padding (a pointer or a config's start one word early) runs on into the code after the padding;
+        # that code begins a function of its own too, as anything calling it calls it there (Biohazard Outbreak File 1's
+        # 0x1C0120, an item action's handler, was left inside the start at its padding 0x1C0118)
+        starts |= {c for c in (self.after_padding(s) for s in starts) if c is not None} - not_starts
         cache = {}
         for rnd in range(50):
             ordered = sorted(starts)
