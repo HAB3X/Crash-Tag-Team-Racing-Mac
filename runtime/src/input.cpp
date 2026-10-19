@@ -29,6 +29,7 @@
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <tuple>
 
 namespace Ps2
 {
@@ -479,6 +480,43 @@ void InputLiveKeys(const std::vector<std::string>& names, double hold)
 
 namespace
 {
+// What a key does in a game's mode: the buttons and stick directions of its controls there
+std::vector<std::tuple<u32, int, int, int>> Effect(int key, int mode)
+{
+    std::vector<std::tuple<u32, int, int, int>> out;
+    for (const Action& a : g_actions)
+    {
+        if ((a.mode < 0 || a.mode == mode) && std::find(a.keys.begin(), a.keys.end(), key) != a.keys.end())
+        {
+            out.emplace_back(a.button, a.stick, a.axis, a.sign);
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// The game's mode changed: a key or mouse button held across it keeps meaning what it did until it's let go. One whose control
+// is different in the new mode is ignored until it's released (Escape held as a status screen's back closes it, then would be
+// START in play and open it again; a key held to skip a cutscene would act in play), one with the same control goes on (Shift
+// held to run)
+void IgnoreChangedHeld(int from, int to, const bool* keyboard)
+{
+    for (int k = 0; k < SDL_SCANCODE_COUNT; k++)
+    {
+        if ((keyboard[k] || g_scriptedKeys[static_cast<size_t>(k)]) && Effect(k, from) != Effect(k, to))
+        {
+            g_ignoredKeys[static_cast<size_t>(k)] = true;
+        }
+    }
+    for (int b = SDL_BUTTON_LEFT; b <= SDL_BUTTON_X2; b++)
+    {
+        if (((g_mouse | g_scriptedMouse) & SDL_BUTTON_MASK(b)) && Effect(MouseBase + b, from) != Effect(MouseBase + b, to))
+        {
+            g_ignoredMouse |= SDL_BUTTON_MASK(b);
+        }
+    }
+}
+
 bool Held(int key, const bool* keyboard)
 {
     if (key >= MouseBase)
@@ -508,12 +546,12 @@ void ForgetReleased(const bool* keyboard)
 {
     for (size_t k = 0; k < g_ignoredKeys.size(); k++)
     {
-        if (g_ignoredKeys[k] && !keyboard[k])
+        if (g_ignoredKeys[k] && !keyboard[k] && !g_scriptedKeys[k])
         {
             g_ignoredKeys[k] = false;
         }
     }
-    g_ignoredMouse &= g_mouse;
+    g_ignoredMouse &= g_mouse | g_scriptedMouse;
     if (g_gamepad == nullptr)
     {
         g_ignoredPad = 0;
@@ -838,6 +876,12 @@ void InputUpdate(double t, SDL_Window* window)
         const bool* keyboard = window != nullptr ? SDL_GetKeyboardState(nullptr) : noKeys;
         g_mouse = window != nullptr ? SDL_GetMouseState(nullptr, nullptr) : 0;
         ForgetReleased(keyboard);
+        static int lastMode = -1;
+        if (GameControls() && lastMode >= 0 && mode != lastMode)
+        {
+            IgnoreChangedHeld(lastMode, mode, keyboard);
+        }
+        lastMode = mode;
         bool walkHeld = false;
         for (const Action& a : g_actions)
         {
