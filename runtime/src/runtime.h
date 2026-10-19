@@ -55,6 +55,7 @@ enum LogChannel
     LogThread = 1 << 8,
     LogIrq = 1 << 9,
     LogIpu = 1 << 10,
+    LogInput = 1 << 11,
 };
 extern u32 g_logMask;
 void Log(const char* format, ...) __attribute__((format(printf, 1, 2)));
@@ -69,6 +70,11 @@ void Log(const char* format, ...) __attribute__((format(printf, 1, 2)));
 void Backtrace();
 // --control's commands (control.cpp): keys held from now, and a picture asked for, taken at the next vblank
 void InputLiveKeys(const std::vector<std::string>& names, double hold);
+// SDL events as a window's: a key or mouse button (bindings.txt's names) pressed, let go, or both at once; the mouse (0-1 over the
+// picture); the wheel (lines, up positive). They need a window: a headless run has a hidden one with --ui
+void InputLiveButton(const std::string& name, bool down, bool up);
+void InputLiveMouse(float x, float y);
+void InputLiveWheel(float lines);
 void GsLiveSnapshot(const std::string& name);
 void GsLiveStop();
 // Records the GS's side from the next vblank (--gs-record's, asked for while the game runs)
@@ -392,6 +398,12 @@ void PadVblank();
 // A port's buttons (PS2 bits, 1 = pressed: select, L3, R3, start, up, right, down, left, L2, R2, L1, R1, triangle, circle,
 // cross, square) and sticks (right x, right y, left x, left y; 0x80 is the centre)
 void PadSetInput(u32 port, u32 pressed, const u8 sticks[4]);
+// Presses PadSetInput took on port 0 and presses the frames showed the game (the --control stats command)
+void PadSetTapSpacing(u32 vblanks);
+u64 PadPressesSeen();
+u64 PadPressesShown();
+// The game's frames so far: the pictures it has flipped to (gs.cpp)
+u64 GameFrames();
 
 // --- iop/servers.cpp
 // The IOP modules' vertical blank handlers (IopOnVblank), as each blank begins on the game's side

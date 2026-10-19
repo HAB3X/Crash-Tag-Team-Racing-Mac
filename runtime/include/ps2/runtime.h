@@ -70,7 +70,7 @@ typedef struct Ps2GameInfo
     // Optional. The settings folder's name in ~/Library/Application Support (the saves, the options, the disc's path);
     // NULL: "PS2 Native Runtime/<executable>"
     const char* folder;
-    // Optional. Nonzero: the game's own pause menu is kept. The menu key (Escape) is then Start, a gamepad's Back is Select,
+    // Optional. Nonzero: the game's own pause menu is kept. The menu key (Escape) is then Start (a game with controls of its own has none: it binds Escape itself), F10 opens the PC options, a gamepad's Back is Select,
     // and the PC menus have no pause menu of their own: their Options (with an Extras tab for the game's Extras and Pause
     // actions) open when the game asks (ps2_open_settings, e.g. from a line of its own options menu), and going back from them
     // goes back to the game
@@ -123,6 +123,17 @@ extern "C"
     int
     ps2_take_click(float* x, float* y);
 
+// While the game says a menu is up (Ps2GameInfo::menu): the mouse's other buttons' clicks (kind: SDL's button numbers, 2 middle, 3
+// right, 4 and 5 the extra ones) and the wheel's turns (PS2_MOUSE_WHEEL_UP, PS2_MOUSE_WHEEL_DOWN), each with where the mouse was
+// (0-1 over the picture), taken one at a time. The left button's clicks come from ps2_take_click
+#define PS2_MOUSE_WHEEL_UP 100
+#define PS2_MOUSE_WHEEL_DOWN 101
+#ifdef __cplusplus
+extern "C"
+#endif
+    int
+    ps2_take_mouse_event(int* kind, float* x, float* y);
+
 // What's been typed while the game was taking text (UTF-8; '\b' for backspace, '\r' for return), taken: up to max bytes into
 // out, the count returned
 #ifdef __cplusplus
@@ -156,6 +167,15 @@ extern "C"
 #endif
     void
     ps2_press_buttons(uint32_t buttons, double seconds);
+
+// The least time between the starts of two taps, in the game's frames (0: none, the default). A tap shorter than the
+// game's frame is shown to it for whole frames, and taps close together one after the other; for a menu that ignores input for a
+// while after each move, this keeps quick taps from falling in that time (each waits its turn). A key held isn't spaced. Any thread
+#ifdef __cplusplus
+extern "C"
+#endif
+    void
+    ps2_set_tap_spacing(int vblanks);
 
 // The PC menus' Options opened over the game (paused under them), for a game with its own pause menu (Ps2GameInfo::ownPause).
 // Any thread
