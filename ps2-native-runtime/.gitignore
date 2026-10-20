@@ -1,0 +1,22 @@
+# Build output
+build/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Game data never goes in this repository: disc images, executables, IOP modules, anything extracted or recompiled from them
+work/
+*.iso
+*.bin
+*.cue
+*.img
+*.IMG
+*.irx
+*.IRX
+*.elf
+SLUS_*
+SLES_*
+SCUS_*
+SCES_*
+SLPM_*
+SLPS_*
