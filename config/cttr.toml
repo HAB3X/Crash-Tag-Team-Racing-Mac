@@ -16,6 +16,7 @@ longjmp = ["0x4f2e90"]
 "0x304028" = "CttrMenuCreate"        # pure3d's frontend menus made and destroyed, Text::Draw: the menus' lines under the
 "0x304080" = "CttrMenuDestroy"       # mouse (src/menus.cpp), the control hints said for the device (src/hints.cpp)
 "0x30c488" = "CttrTextDraw"
+"0x23f6e0" = "CttrSetRumble"       # the preferences' rumble: their VIBRATION line is PC SETTINGS in the pause menu (src/pcsettings.cpp)
 "0x2680e8" = "CttrScreenUpdate"    # the screens' update: the pause menu noted, what Escape presses (src/pause.cpp)
 "0x370508" = "CttrReadLanguage"    # a text bible's language read, its lines about the PS2 said as a computer's (src/pctext.cpp)
 

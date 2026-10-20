@@ -109,6 +109,8 @@ void Layout(Ps2Cpu* c, u32 text)
 }
 }
 
+void CttrDrawTextAs(Ps2Cpu* c, const std::u16string& string, float scale);
+
 void CttrDrawText(Ps2Cpu* c)
 {
     u32 text = c->r[4].uw[0];
@@ -129,13 +131,23 @@ void CttrDrawText(Ps2Cpu* c)
         pictures += ControlOf(ch) != nullptr ? 1 : 0;
     }
     float grown = static_cast<float>(said.size()) / static_cast<float>(original.size() + pictures);
+    CttrDrawTextAs(c, said, grown > 1 ? std::max(2.0f / 3.0f, 1 / grown) : 1.0f);
+}
+
+// A text drawn with a string of its own at a scale of its size: the string put on the game's stack below the frame it's drawn
+// from, the text's layout worked out for it, and the text's own string, size and layout put back afterwards
+void CttrDrawTextAs(Ps2Cpu* c, const std::u16string& string, float scale)
+{
+    u32 text = c->r[4].uw[0];
+    u32 own;
+    std::memcpy(&own, Ps2::EeMemory(text + 140), 4);
     float size;
     std::memcpy(&size, Ps2::EeMemory(text + 156), 4);
-    float smaller = grown > 1 ? size * std::max(2.0f / 3.0f, 1 / grown) : size;
-    std::memcpy(Ps2::EeMemory(text + 156), &smaller, 4);
+    float scaled = size * scale;
+    std::memcpy(Ps2::EeMemory(text + 156), &scaled, 4);
     u64 sp = c->r[29].ud[0];
     u32 at = static_cast<u32>(sp) - Room;
-    std::memcpy(Ps2::EeMemory(at), said.c_str(), 2 * (said.size() + 1));
+    std::memcpy(Ps2::EeMemory(at), string.c_str(), 2 * (string.size() + 1));
     c->r[29].ud[0] = at - 16;
     std::memcpy(Ps2::EeMemory(text + 140), &at, 4);
     Layout(c, text);

@@ -8,6 +8,7 @@ void CttrControlsVblank();
 void CttrTypingVblank();
 void CttrMenusVblank(int menu);
 void CttrPauseVblank();
+void CttrPcSettingsVblank();
 int CttrTyping();
 int CttrMode();
 int CttrMenu();
@@ -36,6 +37,7 @@ static void CttrVblank()
     CttrTypingVblank();
     CttrMenusVblank(CttrMenu());
     CttrPauseVblank();
+    CttrPcSettingsVblank();
 }
 
 int main(int argc, char** argv)

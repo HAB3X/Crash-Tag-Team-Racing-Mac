@@ -26,8 +26,10 @@ extern "C" void f_00304028(Ps2Cpu* c);
 extern "C" void f_00304080(Ps2Cpu* c);
 extern "C" void f_003044e0(Ps2Cpu* c);
 
-// Text::Draw with the control hints said for the device (src/hints.cpp)
+// Text::Draw with the control hints said for the device (src/hints.cpp), and the pause menu's PC SETTINGS (src/pcsettings.cpp:
+// true when it drew the text itself or left it out)
 void CttrDrawText(Ps2Cpu* c);
+bool CttrPcSettingsDraw(Ps2Cpu* c);
 
 namespace
 {
@@ -185,6 +187,19 @@ void Point(Ps2Cpu* c)
 }
 }
 
+bool CttrLineOf(u32 text, u32* menu, int* item) { return LineOf(text, menu, item); }
+
+int CttrMenuItems(u32 menu) { return static_cast<int>((Read32(menu + 116) - Read32(menu + 112)) / 4); }
+
+void CttrTextBox(u32 text, float* left, float* top, float* right, float* bottom)
+{
+    Line line = Box(text);
+    *left = line.left;
+    *top = line.top;
+    *right = line.right;
+    *bottom = line.bottom;
+}
+
 extern "C" void CttrMenuCreate(Ps2Cpu* c)
 {
     u32 menu = c->r[4].uw[0];
@@ -202,7 +217,10 @@ extern "C" void CttrTextDraw(Ps2Cpu* c)
 {
     Point(c);
     Note(c->r[4].uw[0]);
-    CttrDrawText(c);
+    if (!CttrPcSettingsDraw(c))
+    {
+        CttrDrawText(c);
+    }
 }
 
 void CttrMenusVblank(int menu)
