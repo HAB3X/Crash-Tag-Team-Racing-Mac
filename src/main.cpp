@@ -7,6 +7,8 @@ void CttrPcText();
 void CttrControlsVblank();
 void CttrTypingVblank();
 void CttrMenusVblank(int menu);
+void CttrPauseVblank();
+const char* CttrMenuKeyPress();
 int CttrTyping();
 int CttrMode();
 int CttrMenu();
@@ -34,13 +36,14 @@ static void CttrVblank()
     CttrControlsVblank();
     CttrTypingVblank();
     CttrMenusVblank(CttrMenu());
+    CttrPauseVblank();
 }
 
 int main(int argc, char** argv)
 {
     // The PC controls in three modes, the menus, on foot and driving (src/controls.cpp), names typed (src/typing.cpp) and the
-    // mouse on the menus (src/menus.cpp). The PC menus are the runtime's own: Escape opens them (and a gamepad's Back, unless
-    // it's set to be Select), and Return is the game's Start, its pause
+    // mouse on the menus (src/menus.cpp). The game's own pause menu is kept (src/pause.cpp): Escape is its Start (the
+    // frontend menus' back), a gamepad's Back its Select
     static const Ps2GameInfo game = {"Crash Tag Team Racing (USA)",
                                      "SLUS_211.91",
                                      4928124,
@@ -53,11 +56,12 @@ int main(int argc, char** argv)
                                      nullptr,
                                      0,
                                      "Crash Tag Team Racing",
-                                     0,
+                                     1,
                                      CttrControls(),
                                      CttrControlCount(),
                                      CttrModes(),
                                      CttrModeCount(),
-                                     CttrMode};
+                                     CttrMode,
+                                     CttrMenuKeyPress};
     return ps2_main(argc, argv, &game);
 }

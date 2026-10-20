@@ -12,7 +12,8 @@
 // of the input's name first; their count at +784): the car's have GasDigital, on foot's Jump. A car's read
 // is driving, on foot's on foot, and neither for a while (a third of a second: the park draws 15-30 frames a second) the menus,
 // the pause menus included (the game stops reading the player's controls while they're up). The title and the attract demo
-// read the cars' controls: they're driving, and Return, Start there, starts the game.
+// read the cars' controls: they're driving, and Return, Start there, starts the game. Escape, the runtime's menu key, is the
+// game's Start in every mode as well, and the frontend menus' back (src/pause.cpp).
 #include "ps2/iop.h"
 #include "ps2/recomp.h"
 #include "ps2/runtime.h"
