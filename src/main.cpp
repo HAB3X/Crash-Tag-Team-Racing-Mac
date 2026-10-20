@@ -62,6 +62,8 @@ int main(int argc, char** argv)
                                      CttrModes(),
                                      CttrModeCount(),
                                      CttrMode,
+                                     nullptr,
+                                     0,
                                      CttrMenuKeyPress};
     return ps2_main(argc, argv, &game);
 }
