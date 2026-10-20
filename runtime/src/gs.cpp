@@ -2,6 +2,7 @@
 // registers handed to recompiled code, the GS's privileged registers (CSR's vblank and FINISH bits, the IMR), and the picture
 // the PCRTC shows at each vertical blank given to the presenter (a window, or PNGs when headless).
 #include "runtime.h"
+#include "ps2/runtime.h"
 
 #include "../../hw/ee/gif.h"
 #include "../../hw/ee/vif.h"
@@ -26,6 +27,7 @@ u32 ps2_vu0_cmsar0 = 0;
 
 namespace Ps2
 {
+extern const Ps2GameInfo* g_game;
 Options g_options;
 
 namespace
@@ -119,6 +121,8 @@ void GsInit()
     // Field rendering's half line dropped, so the picture doesn't shake (hw/gs/gs.h; $PS2_STEADY_FIELDS=0 keeps it, as on a TV)
     const char* steady = getenv("PS2_STEADY_FIELDS");
     g_hw.gs->steadyFields = steady == nullptr || strcmp(steady, "0") != 0;
+    // A game whose partly masked channels nothing reads drawn without the per-primitive copies (runtime.h)
+    g_hw.gs->looseFrameMasks = g_game != nullptr && g_game->gsLooseFrameMasks != 0;
     Ee::Vu* vu1 = g_hw.vu1;
     Ee::Gif* gif = g_hw.gif;
     // $PS2_VU_STEP=ADDR: the first run of the VU1 program at that byte address traced instruction by instruction

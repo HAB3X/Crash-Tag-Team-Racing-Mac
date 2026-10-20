@@ -91,6 +91,11 @@ typedef struct Ps2GameInfo
     // (an aim held high until the mouse comes back down). A game whose aiming is a stick held with a button (the PC releases
     // of Resident Evil 4 and 5 aim with the mouse)
     int (*mouseStick)(uint32_t pressed);
+    // Optional. Nonzero: a frame mask that keeps only part of a colour channel is drawn as if that channel were written whole
+    // by the GPU renderer (the software GS stays exact). For a game whose masked bits nothing ever reads back or shows: OpenGL
+    // can't mask part of a channel, so each such primitive is a shader blend on a copy of the frame, a render pass each where
+    // they overlap (Biohazard Outbreak masks red's lowest bit for all its 3D; its bar ran at 4-8 frames a second)
+    int gsLooseFrameMasks;
 } Ps2GameInfo;
 
 // A prompt shown over the picture near its bottom (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down
