@@ -86,6 +86,14 @@ class DeadCodeTest(unittest.TestCase):
         self.assertEqual([s for s, _ in functions], [0x500040])
 
 
+class PaddingStartTest(unittest.TestCase):
+    def test_code_after_a_padding_start_is_a_function(self):
+        # f, padding, g; a config's start names the padding before g: g is a start too, not part of a padding function
+        code = overlay(words(addiu(2, 0, 1), JR_RA, NOP, NOP, NOP, NOP, addiu(2, 0, 2), JR_RA, NOP))
+        functions = Program(code, {"extra_functions": [0x500050]}).analyse()
+        self.assertIn(0x500058, [s for s, _ in functions])
+
+
 class CheckWordsTest(unittest.TestCase):
     def test_words_tell_overlays_apart(self):
         a = overlay(words(addiu(2, 0, 1), JR_RA, NOP, NOP))

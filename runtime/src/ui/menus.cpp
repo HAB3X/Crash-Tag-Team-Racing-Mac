@@ -1601,6 +1601,12 @@ bool MenusEvent(const SDL_Event& e)
                 OpenPause();
                 return true;
             }
+            // A game with its own pause menu: the runtime's Options are on F10 (it also asks for them from its own options screen)
+            if (!e.key.repeat && e.key.scancode == SDL_SCANCODE_F10 && OwnPause())
+            {
+                g_settingsAsked = true;
+                return true;
+            }
             return false;
         }
         if (g_capturing)

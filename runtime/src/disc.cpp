@@ -1,7 +1,9 @@
 // The disc: an ISO 9660 image read in place, from a 2048 byte .iso or a raw 2352 byte .bin (MODE1 or MODE2 form 1, named by
 // itself or by its .cue). A patch file (--patch) replaces byte ranges of the disc's data as the sectors are read, so a game's
-// files can be changed without a modified copy of the image: "DPAT", u32 1, u32 count, then count times u64 offset (in the
-// image's 2048 byte sectors' data, sector * 2048 + byte), u32 length, the bytes
+// files can be changed without a modified copy of the image: "DPAT", u32 version, u32 count, then count times u64 offset (in
+// the image's 2048 byte sectors' data, sector * 2048 + byte), u32 length, in version 2 u32 variant, then the bytes. A variant
+// says when a range is laid: 0 always, 1 while the keyboard and mouse are the device used last, 2 while a gamepad is (a game's
+// pictures and font with its buttons' prompts drawn for each: what's read follows the device as it's read)
 #include "runtime.h"
 
 #include <algorithm>
@@ -24,6 +26,7 @@ bool g_dvd = false;
 struct Patch
 {
     u64 offset;
+    u32 variant; // 0 always, 1 the keyboard and mouse, 2 a gamepad
     std::vector<u8> bytes;
 };
 std::vector<Patch> g_patches;
@@ -155,21 +158,30 @@ bool DiscLoadPatch(const std::string& path)
 {
     std::ifstream f(path, std::ios::binary);
     u32 head[3];
-    if (!f.read(reinterpret_cast<char*>(head), 12) || head[0] != 0x54415044 /* "DPAT" */ || head[1] != 1)
+    if (!f.read(reinterpret_cast<char*>(head), 12) || head[0] != 0x54415044 /* "DPAT" */ || (head[1] != 1 && head[1] != 2))
     {
-        Log("--patch %s: not a disc patch file", path.c_str());
+        Log("--patch %s: not a disc patch file (version 1 or 2)", path.c_str());
         return false;
     }
     u64 bytes = 0;
+    u32 variants[3] = {};
     for (u32 i = 0; i < head[2]; i++)
     {
         Patch p;
         u32 length;
-        if (!f.read(reinterpret_cast<char*>(&p.offset), 8) || !f.read(reinterpret_cast<char*>(&length), 4))
+        p.variant = 0;
+        if (!f.read(reinterpret_cast<char*>(&p.offset), 8) || !f.read(reinterpret_cast<char*>(&length), 4) ||
+            (head[1] == 2 && !f.read(reinterpret_cast<char*>(&p.variant), 4)))
         {
             Log("--patch %s: cut short at entry %u", path.c_str(), i);
             return false;
         }
+        if (p.variant > 2)
+        {
+            Log("--patch %s: entry %u has variant %u (0 always, 1 keyboard, 2 gamepad)", path.c_str(), i, p.variant);
+            return false;
+        }
+        variants[p.variant]++;
         p.bytes.resize(length);
         if (!f.read(reinterpret_cast<char*>(p.bytes.data()), length))
         {
@@ -179,7 +191,8 @@ bool DiscLoadPatch(const std::string& path)
         bytes += length;
         g_patches.push_back(std::move(p));
     }
-    Log("patch %s: %u ranges, %llu bytes", path.c_str(), head[2], static_cast<unsigned long long>(bytes));
+    Log("patch %s: %u ranges (%u for the keyboard, %u for a gamepad), %llu bytes", path.c_str(), head[2], variants[1],
+        variants[2], static_cast<unsigned long long>(bytes));
     return true;
 }
 
@@ -242,8 +255,13 @@ bool DiscReadSectors(u32 lsn, u32 count, u8* out)
         return false;
     }
     const u64 start = static_cast<u64>(lsn) * 2048, end = start + static_cast<u64>(count) * 2048;
+    const u32 device = InputLastKeyboard() ? 1 : 2;
     for (const Patch& p : g_patches)
     {
+        if (p.variant != 0 && p.variant != device)
+        {
+            continue;
+        }
         const u64 from = std::max(start, p.offset), to = std::min(end, p.offset + p.bytes.size());
         if (from < to)
         {

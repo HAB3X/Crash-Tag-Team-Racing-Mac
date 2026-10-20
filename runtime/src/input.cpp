@@ -29,6 +29,7 @@
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <tuple>
 
 namespace Ps2
 {
@@ -178,7 +179,12 @@ std::vector<Action> MakeActions()
 {
     if (GameControls())
     {
-        std::vector<Action> actions{MenuAction()};
+        // A game with its own pause menu has no menu key of the runtime's: Escape is the game's to bind, in each mode
+        std::vector<Action> actions;
+        if (g_game->ownPause == 0)
+        {
+            actions.push_back(MenuAction());
+        }
         for (int n = 0; n < g_game->controlCount; n++)
         {
             actions.push_back(GameAction(g_game->controls[n]));
@@ -236,6 +242,13 @@ SDL_FRect g_picture = {0, 0, 0, 0};
 float g_mouseX = -1, g_mouseY = -1;
 bool g_mouseMoved = false;
 std::vector<std::pair<float, float>> g_clicks;
+// The other mouse buttons' clicks and the wheel's turns while the game says a menu is up (ps2_take_mouse_event)
+struct MouseEvent
+{
+    int kind;
+    float x, y;
+};
+std::vector<MouseEvent> g_mouseEvents;
 // Whether any of the player's buttons (or the left stick) was held at the last update, and the prompt over the picture
 std::atomic<bool> g_anyHeld{false};
 std::string g_prompt;
@@ -378,6 +391,12 @@ void LoadBindings()
     }
 }
 
+// Keys and mouse buttons pressed since the last update, by their events: one pressed and let go between two updates is no
+// longer down by SDL's state, and still counts as held for this update (the pad server then shows it to the game for whole
+// frames: iop/padman.cpp)
+std::vector<bool> g_keyEdge(SDL_SCANCODE_COUNT, false);
+SDL_MouseButtonFlags g_mouseEdge = 0;
+
 // The keys and mouse buttons --key holds now (bindings.txt's names), as the keyboard's state and mouse buttons
 std::vector<bool> g_scriptedKeys(SDL_SCANCODE_COUNT, false);
 SDL_MouseButtonFlags g_scriptedMouse = 0;
@@ -387,10 +406,12 @@ struct LiveKey
 {
     double until;
     std::vector<std::string> keys;
+    bool applied = false; // an update has held it (a hold shorter than the updates' spacing still counts once)
 };
 std::mutex g_liveLock;
 std::vector<LiveKey> g_liveKeys;
 std::atomic<double> g_liveNow{0};
+SDL_FPoint g_liveMouse = {0, 0}; // where --control's mouse is (window coordinates)
 
 void ScriptedKeys(double t)
 {
@@ -401,7 +422,7 @@ void ScriptedKeys(double t)
         std::lock_guard<std::mutex> lock(g_liveLock);
         for (size_t i = 0; i < g_liveKeys.size();)
         {
-            if (t >= g_liveKeys[i].until)
+            if (t >= g_liveKeys[i].until && g_liveKeys[i].applied)
             {
                 g_liveKeys.erase(g_liveKeys.begin() + static_cast<long>(i));
                 continue;
@@ -419,6 +440,7 @@ void ScriptedKeys(double t)
                 }
                 g_lastKeyboard = true;
             }
+            g_liveKeys[i].applied = true;
             i++;
         }
     }
@@ -458,14 +480,52 @@ void InputLiveKeys(const std::vector<std::string>& names, double hold)
 
 namespace
 {
+// What a key does in a game's mode: the buttons and stick directions of its controls there
+std::vector<std::tuple<u32, int, int, int>> Effect(int key, int mode)
+{
+    std::vector<std::tuple<u32, int, int, int>> out;
+    for (const Action& a : g_actions)
+    {
+        if ((a.mode < 0 || a.mode == mode) && std::find(a.keys.begin(), a.keys.end(), key) != a.keys.end())
+        {
+            out.emplace_back(a.button, a.stick, a.axis, a.sign);
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// The game's mode changed: a key or mouse button held across it keeps meaning what it did until it's let go. One whose control
+// is different in the new mode is ignored until it's released (Escape held as a status screen's back closes it, then would be
+// START in play and open it again; a key held to skip a cutscene would act in play), one with the same control goes on (Shift
+// held to run)
+void IgnoreChangedHeld(int from, int to, const bool* keyboard)
+{
+    for (int k = 0; k < SDL_SCANCODE_COUNT; k++)
+    {
+        if ((keyboard[k] || g_scriptedKeys[static_cast<size_t>(k)]) && Effect(k, from) != Effect(k, to))
+        {
+            g_ignoredKeys[static_cast<size_t>(k)] = true;
+        }
+    }
+    for (int b = SDL_BUTTON_LEFT; b <= SDL_BUTTON_X2; b++)
+    {
+        if (((g_mouse | g_scriptedMouse) & SDL_BUTTON_MASK(b)) && Effect(MouseBase + b, from) != Effect(MouseBase + b, to))
+        {
+            g_ignoredMouse |= SDL_BUTTON_MASK(b);
+        }
+    }
+}
+
 bool Held(int key, const bool* keyboard)
 {
     if (key >= MouseBase)
     {
-        return ((g_mouse | g_scriptedMouse) & ~g_ignoredMouse & SDL_BUTTON_MASK(key - MouseBase)) != 0;
+        return ((g_mouse | g_scriptedMouse | g_mouseEdge) & ~g_ignoredMouse & SDL_BUTTON_MASK(key - MouseBase)) != 0;
     }
     return key > SDL_SCANCODE_UNKNOWN && key < SDL_SCANCODE_COUNT &&
-           (keyboard[key] || g_scriptedKeys[static_cast<size_t>(key)]) && !g_ignoredKeys[static_cast<size_t>(key)];
+           (keyboard[key] || g_scriptedKeys[static_cast<size_t>(key)] || g_keyEdge[static_cast<size_t>(key)]) &&
+           !g_ignoredKeys[static_cast<size_t>(key)];
 }
 
 // A key of the PC menus' (theirs only: it presses nothing of the PS2's)
@@ -486,12 +546,12 @@ void ForgetReleased(const bool* keyboard)
 {
     for (size_t k = 0; k < g_ignoredKeys.size(); k++)
     {
-        if (g_ignoredKeys[k] && !keyboard[k])
+        if (g_ignoredKeys[k] && !keyboard[k] && !g_scriptedKeys[k])
         {
             g_ignoredKeys[k] = false;
         }
     }
-    g_ignoredMouse &= g_mouse;
+    g_ignoredMouse &= g_mouse | g_scriptedMouse;
     if (g_gamepad == nullptr)
     {
         g_ignoredPad = 0;
@@ -565,11 +625,108 @@ void InputInit()
     LoadBindings();
 }
 
-void InputPicture(float x, float y, float w, float h) { g_picture = {x, y, w, h}; }
+void InputPicture(float x, float y, float w, float h)
+{
+    std::lock_guard<std::mutex> lock(g_typedLock);
+    g_picture = {x, y, w, h};
+}
+
+// --control's events: SDL events pushed as the window's own would be, so the whole event path is what runs
+namespace
+{
+SDL_Event LiveMouseEvent(SDL_EventType type)
+{
+    SDL_Event e = {};
+    e.type = type;
+    e.motion.windowID = 0;
+    e.motion.x = g_liveMouse.x;
+    e.motion.y = g_liveMouse.y;
+    return e;
+}
+}
+
+void InputLiveButton(const std::string& name, bool down, bool up)
+{
+    int key = KeyFromName(name);
+    if (key < 0)
+    {
+        Log("--control: no key \"%s\"", name.c_str());
+        return;
+    }
+    for (int phase = 0; phase < 2; phase++)
+    {
+        if (!(phase == 0 ? down : up))
+        {
+            continue;
+        }
+        SDL_Event e = {};
+        if (key >= MouseBase)
+        {
+            e = LiveMouseEvent(phase == 0 ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP);
+            e.button.button = static_cast<Uint8>(key - MouseBase);
+            e.button.down = phase == 0;
+            e.button.x = g_liveMouse.x;
+            e.button.y = g_liveMouse.y;
+        }
+        else
+        {
+            e.type = phase == 0 ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+            e.key.scancode = static_cast<SDL_Scancode>(key);
+            e.key.key = SDL_GetKeyFromScancode(e.key.scancode, SDL_KMOD_NONE, false);
+            e.key.down = phase == 0;
+        }
+        SDL_PushEvent(&e);
+    }
+}
+
+// The mouse moving a stick (Ps2GameInfo::mouseStick): its motion since the last update (the window's relative mode's, or
+// --control's move) and the up and down it has been moved to while it does
+static float g_mouseDx = 0, g_mouseDy = 0;
+static float g_mouseAim = 0;
+static bool g_mouseCaptured = false;
+// Full deflection across at this many pixels of motion in an update (a 60th of a second); up and down at this many in all
+constexpr float MouseTurnPixels = 12.0f;
+constexpr float MouseAimPixels = 120.0f;
+
+void InputLiveMove(float dx, float dy)
+{
+    std::lock_guard<std::mutex> lock(g_typedLock);
+    g_mouseDx += dx;
+    g_mouseDy += dy;
+}
+
+void InputLiveMouse(float x, float y)
+{
+    SDL_FRect picture;
+    {
+        std::lock_guard<std::mutex> lock(g_typedLock);
+        picture = g_picture;
+    }
+    g_liveMouse = {picture.x + x * picture.w, picture.y + y * picture.h};
+    SDL_Event e = LiveMouseEvent(SDL_EVENT_MOUSE_MOTION);
+    SDL_PushEvent(&e);
+}
+
+void InputLiveWheel(float lines)
+{
+    SDL_Event e = LiveMouseEvent(SDL_EVENT_MOUSE_WHEEL);
+    e.wheel.y = lines;
+    e.wheel.mouse_x = g_liveMouse.x;
+    e.wheel.mouse_y = g_liveMouse.y;
+    SDL_PushEvent(&e);
+}
 
 void InputEvent(const SDL_Event& e)
 {
     InputNoteDevice(e);
+    if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode < SDL_SCANCODE_COUNT)
+    {
+        g_keyEdge[e.key.scancode] = true;
+    }
+    else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+    {
+        g_mouseEdge |= SDL_BUTTON_MASK(e.button.button);
+    }
     if ((e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) && g_picture.w > 0)
     {
         float mx = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.x : e.button.x;
@@ -581,11 +738,28 @@ void InputEvent(const SDL_Event& e)
             g_mouseX = x;
             g_mouseY = y;
             g_mouseMoved = true;
+            if (g_mouseCaptured)
+            {
+                g_mouseDx += e.motion.xrel;
+                g_mouseDy += e.motion.yrel;
+            }
         }
-        else if (e.button.button == SDL_BUTTON_LEFT && g_menu && x >= 0 && x < 1 && y >= 0 && y < 1)
+        else if (g_menu && x >= 0 && x < 1 && y >= 0 && y < 1)
         {
-            g_clicks.emplace_back(x, y);
+            if (e.button.button == SDL_BUTTON_LEFT)
+            {
+                g_clicks.emplace_back(x, y);
+            }
+            else
+            {
+                g_mouseEvents.push_back({e.button.button, x, y});
+            }
         }
+    }
+    else if (e.type == SDL_EVENT_MOUSE_WHEEL && g_menu && e.wheel.y != 0)
+    {
+        std::lock_guard<std::mutex> lock(g_typedLock);
+        g_mouseEvents.push_back({e.wheel.y > 0 ? PS2_MOUSE_WHEEL_UP : PS2_MOUSE_WHEEL_DOWN, g_mouseX, g_mouseY});
     }
     if (e.type == SDL_EVENT_GAMEPAD_ADDED && g_gamepad == nullptr)
     {
@@ -679,6 +853,13 @@ void InputUpdate(double t, SDL_Window* window)
     bool remap = g_menu && !GameControls();
     // The PC menus up: the game gets nothing (it's paused); what's held as they close waits to be let go
     bool menus = Ui::MenusOpen();
+    // A game that says when a menu is up has the mouse pointer over its menus only (hidden in play)
+    static int pointerShown = -1;
+    if (window != nullptr && g_game != nullptr && g_game->menu != nullptr && pointerShown != (menus || g_menu ? 1 : 0))
+    {
+        pointerShown = menus || g_menu ? 1 : 0;
+        pointerShown != 0 ? SDL_ShowCursor() : SDL_HideCursor();
+    }
     if (window != nullptr && (menus || g_ignoreAll))
     {
         InputIgnoreHeld();
@@ -695,6 +876,12 @@ void InputUpdate(double t, SDL_Window* window)
         const bool* keyboard = window != nullptr ? SDL_GetKeyboardState(nullptr) : noKeys;
         g_mouse = window != nullptr ? SDL_GetMouseState(nullptr, nullptr) : 0;
         ForgetReleased(keyboard);
+        static int lastMode = -1;
+        if (GameControls() && lastMode >= 0 && mode != lastMode)
+        {
+            IgnoreChangedHeld(lastMode, mode, keyboard);
+        }
+        lastMode = mode;
         bool walkHeld = false;
         for (const Action& a : g_actions)
         {
@@ -763,6 +950,33 @@ void InputUpdate(double t, SDL_Window* window)
         }
         g_walkHeld = walkHeld;
     }
+    // The mouse moving a stick while the game asks (not with the PC menus or a game's menu up)
+    int mouseStick = g_game != nullptr && g_game->mouseStick != nullptr && !menus && !g_menu ? g_game->mouseStick(pressed) : 0;
+    if ((mouseStick != 0) != g_mouseCaptured)
+    {
+        g_mouseCaptured = mouseStick != 0;
+        if (window != nullptr)
+        {
+            SDL_SetWindowRelativeMouseMode(window, g_mouseCaptured);
+        }
+        std::lock_guard<std::mutex> lock(g_typedLock);
+        g_mouseDx = g_mouseDy = 0;
+        g_mouseAim = 0;
+    }
+    if (mouseStick == 1 || mouseStick == 2)
+    {
+        float dx, dy;
+        {
+            std::lock_guard<std::mutex> lock(g_typedLock);
+            dx = g_mouseDx;
+            dy = g_mouseDy;
+            g_mouseDx = g_mouseDy = 0;
+        }
+        g_mouseAim = std::clamp(g_mouseAim + dy / MouseAimPixels, -1.0f, 1.0f);
+        int s = mouseStick == 1 ? 0 : 1;
+        sticks[s][0] += std::clamp(dx / MouseTurnPixels, -1.0f, 1.0f);
+        sticks[s][1] += g_mouseAim;
+    }
     // A stick from keys: a diagonal is both axes at full, as a PS2 stick pushed into its corner reads (and PCSX2's keys give):
     // scaled to the circle (both at 1/sqrt(2)) games take it for a stick half pushed, CTTR's Crash walking. Walking at half
     u8 out[4] = {0x80, 0x80, 0x80, 0x80}; // right x, right y, left x, left y
@@ -826,6 +1040,8 @@ void InputUpdate(double t, SDL_Window* window)
     // The left stick counts once it's pushed a quarter of the way: a gamepad's stick at rest is seldom exactly in the middle,
     // and counted as held it kept "any button held" on for good (the skip never started, its prompt never came back)
     constexpr int StickHeld = 0x20;
+    std::fill(g_keyEdge.begin(), g_keyEdge.end(), false);
+    g_mouseEdge = 0;
     g_anyHeld = pressed != 0 || std::abs(out[2] - 0x80) > StickHeld || std::abs(out[3] - 0x80) > StickHeld;
     PadSetInput(0, pressed, out);
 }
@@ -1151,6 +1367,20 @@ extern "C" int ps2_take_click(float* x, float* y)
     *x = g_clicks.front().first;
     *y = g_clicks.front().second;
     g_clicks.erase(g_clicks.begin());
+    return 1;
+}
+
+extern "C" int ps2_take_mouse_event(int* kind, float* x, float* y)
+{
+    std::lock_guard<std::mutex> lock(g_typedLock);
+    if (g_mouseEvents.empty())
+    {
+        return 0;
+    }
+    *kind = g_mouseEvents.front().kind;
+    *x = g_mouseEvents.front().x;
+    *y = g_mouseEvents.front().y;
+    g_mouseEvents.erase(g_mouseEvents.begin());
     return 1;
 }
 
