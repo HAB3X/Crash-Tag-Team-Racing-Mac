@@ -344,7 +344,11 @@ the same pixel, and triangles that share an edge (a mesh's) or are clear of each
 of either, a quarter pixel clear unless the corner is the edge's own end), where it broke wherever their rectangles met. The
 Training Ground's recording drew 4.7 times faster and the loading screen 5.6 times, every picture's hash the same. What is left
 (overlapping foliage, glyphs and their shadows) needs the destination read per primitive: a Metal renderer's programmable
-blending, not OpenGL's copies. A blit in place of the copy's draw was no faster.
+blending, not OpenGL's copies. A blit in place of the copy's draw was no faster. A game whose partly masked bits nothing reads
+back or shows can say so (`Ps2GameInfo::gsLooseFrameMasks`, the GS's `looseFrameMasks`): such a channel is then written whole
+on the GPU, with no copies at all (the software GS stays exact). Biohazard Outbreak's red low bit is one: `--gs-replay` of File
+1's bar, File 2's Training Ground and its zoo drew every picture the same without the mask (pixel for pixel at 1x), 35, 5 and
+3 times faster, and the bar went from 4-8 frames a second to 30.
 
 ### The render thread
 
