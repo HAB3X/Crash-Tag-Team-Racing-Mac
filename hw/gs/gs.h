@@ -511,6 +511,9 @@ public:
     // place, as a computer's screen shows them, the picture shakes by half a line. On: an OFY half a line past a whole one is
     // taken as the whole one while the display is in field mode, so both fields are drawn alike
     bool steadyFields = false;
+    // Frame masks of part of a channel drawn as the whole channel by the GPU renderer (ps2-native-runtime's addition, a game's
+    // own choice: Ps2GameInfo::gsLooseFrameMasks). The software GS ignores it
+    bool looseFrameMasks = false;
 
     // The privileged registers (the PCRTC's: PMODE, SMODE2, DISPFB1/2, DISPLAY1/2, BGCOLOR)
     RegPmode pmode = {};

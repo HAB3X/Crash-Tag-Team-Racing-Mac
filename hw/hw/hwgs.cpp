@@ -4530,6 +4530,17 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
     }
 
     const u32 channelFull[4] = {frame16 ? 0xF8u : 0xFFu, frame16 ? 0xF8u : 0xFFu, frame16 ? 0xF8u : 0xFFu, frame16 ? 0x80u : 0xFFu};
+    // A game that says nothing reads its partly masked bits has them written with their channel (gs.h's looseFrameMasks)
+    if (gs_.looseFrameMasks)
+    {
+        for (u32 i = 0; i < 4; i++)
+        {
+            if (channelMasks[i] != channelFull[i])
+            {
+                channelMasks[i] = 0;
+            }
+        }
+    }
     bool shaderBlend = false;
     for (u32 i = 0; i < 4; i++)
     {
