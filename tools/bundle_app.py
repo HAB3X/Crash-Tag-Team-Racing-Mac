@@ -54,7 +54,7 @@ def rpaths_of(binary):
     return re.findall(r"cmd LC_RPATH\n\s+cmdsize \d+\n\s+path (\S+)", text)
 
 
-def standalone(source, out, name=None):
+def standalone(source, out, name=None, runtime=None):
     """A copy of the app in out with its libraries in Contents/Frameworks and their licences: the app, its executable,
     {name: library} and the licences' packages."""
     out.mkdir(parents=True, exist_ok=True)
@@ -120,8 +120,10 @@ def standalone(source, out, name=None):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(licence, target)
 
-    # The menus' fonts (built into the program) come with their licences
-    for runtime in (ROOT / "ps2-native-runtime", ROOT.parent / "ps2-native-runtime"):
+    # The menus' fonts (built into the program) come with their licences: from the runtime the build used, or one in or next to
+    # this repository
+    places = [Path(runtime)] if runtime else []
+    for runtime in places + [ROOT / "ps2-native-runtime", ROOT.parent / "ps2-native-runtime"]:
         fonts = runtime / "runtime/fonts"
         if fonts.is_dir():
             for licence in [*fonts.glob("*.txt"), fonts / "README.md"]:
@@ -140,8 +142,9 @@ def main():
     parser.add_argument("--out", default=str(OUT))
     parser.add_argument("--name", help="the app's name in the release (its folder's)")
     parser.add_argument("--zip", nargs="?", const="", help="also zip the app (as this file name, or the app's name)")
+    parser.add_argument("--runtime", help="the runtime the build used (its fonts' licences)")
     arguments = parser.parse_args()
-    app, executable, copied, packages = standalone(Path(arguments.app), Path(arguments.out), arguments.name)
+    app, executable, copied, packages = standalone(Path(arguments.app), Path(arguments.out), arguments.name, arguments.runtime)
 
     # Signed ad hoc: the libraries first, then the bundle
     for target in copied.values():

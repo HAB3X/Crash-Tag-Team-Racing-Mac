@@ -54,7 +54,7 @@ if(APPLE)
     # zipped: build/dist/Crash Tag Team Racing.app and Crash-Tag-Team-Racing-macOS.zip. `cmake --build build --target release`
     add_custom_target(release
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_app.py --app $<TARGET_BUNDLE_DIR:crash-cttr>
-                --name "Crash Tag Team Racing" --zip
+                --name "Crash Tag Team Racing" --zip --runtime ${PS2_RUNTIME_DIR}
         DEPENDS crash-cttr
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Making the standalone app (build/dist)"
