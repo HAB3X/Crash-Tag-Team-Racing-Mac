@@ -96,6 +96,11 @@ typedef struct Ps2GameInfo
     // can't mask part of a channel, so each such primitive is a shader blend on a copy of the frame, a render pass each where
     // they overlap (Biohazard Outbreak masks red's lowest bit for all its 3D; its bar ran at 4-8 frames a second)
     int gsLooseFrameMasks;
+    // Optional, with ownPause: what the menu key presses now, as a control's press names it ("triangle"), for a game whose
+    // Start isn't a way out everywhere (Crash Tag Team Racing's frontend menus take it as a choice): NULL, or no hook, is the
+    // game's Start. Asked on the presenter's thread at each input update, while the menu key is held (reading the game's
+    // memory is fine)
+    const char* (*menuKeyPress)(void);
 } Ps2GameInfo;
 
 // A prompt shown over the picture near its bottom (the PC menus' style: e.g. "Hold any button to skip"), NULL to take it down
