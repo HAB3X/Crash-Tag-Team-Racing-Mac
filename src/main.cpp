@@ -8,7 +8,6 @@ void CttrControlsVblank();
 void CttrTypingVblank();
 void CttrMenusVblank(int menu);
 void CttrPauseVblank();
-const char* CttrMenuKeyPress();
 int CttrTyping();
 int CttrMode();
 int CttrMenu();
@@ -64,6 +63,6 @@ int main(int argc, char** argv)
                                      CttrMode,
                                      nullptr,
                                      0,
-                                     CttrMenuKeyPress};
+                                     nullptr};
     return ps2_main(argc, argv, &game);
 }

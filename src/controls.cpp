@@ -1,19 +1,20 @@
 // Crash Tag Team Racing's PC controls: the keyboard and mouse in three modes (Ps2GameInfo's controls and modes), the menus, on
 // foot in the park and driving, because one key can't serve all three: W is the stick on foot but accelerates (cross) in a car.
-// A gamepad is the PS2's controller as before. The game's own controls are its controller maps (design\permanent\controllers.god
-// in COMMON.RCF): PresentationMap (the menus: Select is cross, Back triangle, Aux1 circle, Aux2 square, the d-pad and the left
-// stick), OnFootMap (Jump cross, Spin square, Flop circle, Interact triangle, ToggleFP L1, Zoom R1, CameraReset R3, HudDisplay
-// L3, SkipAllTutorials Select, the right stick the camera) and CarMap (GasDigital cross, BrakeDigital square or L2, GasAnalog and
-// TurretFire R2, Clash triangle, WeaponFire circle, SwapPlayer R1, Zoom L1, Taunt L3, Reset Select, the left stick steering and
-// aiming the turret). A powerslide is the brake tapped while turning.
+// A gamepad is the PS2's controller as before. The game's own controls are its controller maps
+// (design\permanent\controllers.god in COMMON.RCF): PresentationMap (the menus: Select is cross, Back triangle, Aux1 circle,
+// Aux2 square, the d-pad and the left stick), OnFootMap (Jump cross, Spin square, Flop circle, Interact triangle, ToggleFP L1,
+// Zoom R1, CameraReset R3, HudDisplay L3, SkipAllTutorials Select, the right stick the camera) and CarMap (GasDigital cross,
+// BrakeDigital square or L2, GasAnalog and TurretFire R2, Clash triangle, WeaponFire circle, SwapPlayer R1, Zoom L1, Taunt L3,
+// Reset Select, the left stick steering and aiming the turret). A powerslide is the brake tapped while turning.
 //
 // The mode is what the game reads: every input is read through Controller::GetValue (0x196560, the controller and the input's
 // index), overridden to note which controllers are read. A controller is known by its inputs (from +16, 24 bytes each: a hash
-// of the input's name first; their count at +784): the car's have GasDigital, on foot's Jump. A car's read
-// is driving, on foot's on foot, and neither for a while (a third of a second: the park draws 15-30 frames a second) the menus,
-// the pause menus included (the game stops reading the player's controls while they're up). The title and the attract demo
-// read the cars' controls: they're driving, and Return, Start there, starts the game. Escape, the runtime's menu key, is the
-// game's Start in every mode as well, and the frontend menus' back (src/pause.cpp).
+// of the input's name first; their count at +784): the car's have GasDigital, on foot's Jump. A car's read is driving, on
+// foot's on foot, and neither for a while (a third of a second: the park draws 15-30 frames a second) the menus, the pause
+// menus included (the game stops reading the player's controls while they're up). The title and the attract demo read the cars'
+// controls: they're driving, and Return, Start there, starts the game. Escape is the game's own: its Start on foot and driving
+// (the game's pause menu), its back in the frontend's menus, and Start again in the pause menu (a mode of its own while that's
+// up: src/pause.cpp), where the menus' back does nothing.
 #include "ps2/iop.h"
 #include "ps2/recomp.h"
 #include "ps2/runtime.h"
@@ -24,6 +25,9 @@
 
 extern "C" void f_00196560(Ps2Cpu* c);
 
+// Whether the game's own pause menu is up (src/pause.cpp)
+bool CttrPauseUp();
+
 namespace
 {
 enum Mode : int
@@ -31,9 +35,11 @@ enum Mode : int
     Menus,
     OnFoot,
     Driving,
+    // The game's own pause menu (src/pause.cpp): Escape goes on from it, as Start does
+    Paused,
 };
 
-const char* const Modes[] = {"Menus", "On foot", "Driving"};
+const char* const Modes[] = {"Menus", "On foot", "Driving", "Pause menu"};
 
 const Ps2GameControl Controls[] = {
     {"menu_up", "Up", "up", "Up, W", Menus},
@@ -41,7 +47,7 @@ const Ps2GameControl Controls[] = {
     {"menu_left", "Left", "left", "Left, A", Menus},
     {"menu_right", "Right", "right", "Right, D", Menus},
     {"menu_select", "Select", "cross", "Return, Space", Menus},
-    {"menu_back", "Back", "triangle", "Backspace", Menus},
+    {"menu_back", "Back", "triangle", "Backspace, Escape", Menus},
     {"menu_square", "Square (new name, change outfit)", "square", "Tab", Menus},
     {"menu_circle", "Circle", "circle", "Left Shift", Menus},
     {"foot_forward", "Move forward", "left_up", "W", OnFoot},
@@ -61,7 +67,7 @@ const Ps2GameControl Controls[] = {
     {"foot_camera_reset", "Reset the camera", "r3", "R, Mouse Middle", OnFoot},
     {"foot_map", "Show the map", "l3", "Tab", OnFoot},
     {"foot_tutorials", "Skip the tutorials", "select", "Backspace", OnFoot},
-    {"foot_pause", "Pause", "start", "Return", OnFoot},
+    {"foot_pause", "Pause", "start", "Return, Escape", OnFoot},
     {"foot_walk", "Walk", "walk", "Left Ctrl", OnFoot},
     {"drive_accelerate", "Accelerate", "cross", "W, Up", Driving},
     {"drive_brake", "Brake, reverse, powerslide", "square", "S, Down", Driving},
@@ -76,7 +82,14 @@ const Ps2GameControl Controls[] = {
     {"drive_zoom", "Zoom (gunner)", "l1", "Mouse Right", Driving},
     {"drive_taunt", "Taunt", "l3", "T", Driving},
     {"drive_reset", "Reset the car", "select", "R", Driving},
-    {"drive_pause", "Pause", "start", "Return", Driving},
+    {"drive_pause", "Pause", "start", "Return, Escape", Driving},
+    {"pause_up", "Up", "up", "Up, W", Paused},
+    {"pause_down", "Down", "down", "Down, S", Paused},
+    {"pause_left", "Left", "left", "Left, A", Paused},
+    {"pause_right", "Right", "right", "Right, D", Paused},
+    {"pause_select", "Select", "cross", "Return, Space", Paused},
+    {"pause_back", "Back", "triangle", "Backspace", Paused},
+    {"pause_resume", "Go on playing", "start", "Escape", Paused},
 };
 
 // An input's name hashed as the game does (0x3A1F60): h = h * 65599 ^ the character (signed), from 0, 64 bits
@@ -151,6 +164,10 @@ void CttrControlsVblank()
     {
         g_mode = Menus;
     }
+    if (CttrPauseUp())
+    {
+        g_mode = Paused;
+    }
     static int logged = -1;
     if (g_mode != logged)
     {
@@ -162,7 +179,7 @@ void CttrControlsVblank()
 
 int CttrMode() { return g_mode; }
 
-int CttrMenu() { return g_mode == Menus ? 1 : 0; }
+int CttrMenu() { return g_mode == Menus || g_mode == Paused ? 1 : 0; }
 
 const Ps2GameControl* CttrControls() { return Controls; }
 
