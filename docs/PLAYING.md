@@ -1,88 +1,66 @@
-# Playing Crash Tag Team Racing on a Mac
+# Playing Crash Tag Team Racing on Mac
 
-This is a native Mac port of Crash Tag Team Racing, made by recompiling the PS2 game's code. It contains no game data: you need
-your own copy of the game.
+## You need
 
-## What you need
-
-- A Mac with Apple silicon (M1 or later) running a recent macOS.
-- A disc image of **your own** USA copy of the game (SLUS-21191), as an `.iso`. Other versions (PAL, the PSP game) aren't
-  supported: the app checks the disc and says so.
-
-Nothing else: the app carries its own libraries (no Homebrew needed).
+- An Apple-silicon Mac on a recent macOS
+- Your own USA disc image (SLUS-21191) as an `.iso`. PAL and the PSP version aren't supported.
 
 ## First run
 
-1. Unzip `Crash-Tag-Team-Racing-macOS.zip` and move **Crash Tag Team Racing.app** wherever you like (Applications is fine).
-2. The app is signed ad hoc, not by an Apple developer account. The first time you open it, macOS may say it can't check it:
-   right-click (or Control-click) the app, choose **Open**, then **Open** again. You only have to do this once.
-3. On the first launch the app asks for your disc image with a file dialog. Pick your `.iso`. It remembers it; to pick another,
-   delete `disc_image.txt` from the settings folder (below).
+1. Unzip and move **Crash Tag Team Racing.app** anywhere (Applications is fine).
+2. The first time, right-click it, choose **Open**, then **Open** again.
+3. Pick your disc image. It's remembered; delete `disc_image.txt` (below) to pick another.
 
-## Where things are
+## Where your files are
 
-Everything the game keeps is in **~/Library/Application Support/Crash Tag Team Racing/** (in Finder: Go > Go to Folder…, then
-paste that path):
+`~/Library/Application Support/Crash Tag Team Racing/` (Finder: Go › Go to Folder)
 
-| What | Where |
+| What | File |
 | --- | --- |
-| Saves (the game's memory card) | `memcards/port0/` |
-| The options | `options.txt`, `graphics.txt` |
-| Your controls | `bindings.txt` |
-| The disc image's path | `disc_image.txt` |
-
-Saving works like a PC game: your saves are dated with your Mac's clock, and no screen mentions a memory card.
+| Saves | `memcards/port0/` |
+| Settings | `options.txt`, `graphics.txt`, `bindings.txt` |
+| Disc path | `disc_image.txt` |
 
 ## Controls
 
-A controller (Xbox, PlayStation, Switch and most others) works out of the box, as on the PS2. The keyboard and mouse have a set of
-keys for each part of the game:
+Controllers work out of the box. Keyboard and mouse:
 
 | Action | On foot | Driving |
 | --- | --- | --- |
-| Move / steer | W A S D | A / D (or Left / Right) |
-| Accelerate / brake and reverse | | W / S (or Up / Down); tap brake while turning to powerslide |
+| Move / steer | W A S D | A / D |
+| Accelerate / brake | | W / S (tap brake while turning to powerslide) |
 | Jump | Space | |
-| Spin attack | Left mouse button (or J) | |
+| Spin attack | Left mouse (or J) | |
 | Body slam | Left Shift (or K) | |
 | Talk | E (or I) | |
-| Camera | Arrow keys; Q first person, right mouse button zoom, R reset | |
-| Power-up / turret | | Space / left mouse button |
-| Clash / swap driver and gunner | | Left Shift or E / Q |
-| Aim or tilt | | I / K |
-| Map / skip tutorials | Tab / Backspace | |
-| Taunt / reset the car | | T / R |
-| Walk | Left Ctrl toggles walking | |
-| Pause | Esc (or Enter) | Esc (or Enter) |
+| Camera | Arrows; Q first person, right mouse zoom, R reset | |
+| Power-up / turret | | Space / left mouse |
+| Clash / swap seats | | Left Shift or E / Q |
+| Aim | | I / K |
+| Map / skip tutorial | Tab / Backspace | |
+| Taunt / reset car | | T / R |
+| Walk | Left Ctrl | |
+| Pause | Esc or Enter | Esc or Enter |
 
-In the menus: the arrow keys or W A S D move, Enter or Space chooses, Backspace or Esc goes back, and the mouse points and
-clicks. On the name screen just type your name (Backspace deletes, Enter is done). Fullscreen is Cmd+F (or Alt+Enter).
+Menus: arrows or WASD, Enter to choose, Esc to go back, or use the mouse. Fullscreen: Cmd+F. Rebind everything in
+**PC Settings › Controls**.
 
-The game's control hints name the keys you have bound when you last used the keyboard, or your controller's buttons when you
-last used a controller. Everything can be rebound in **PC Settings > Controls**.
+## PC Settings
 
-## The pause menu and PC Settings
+In the pause menu, under **Preferences**:
 
-The pause menu is the game's own (Esc or Enter). Its **Preferences** has **PC Settings** in place of the controller's
-vibration, which opens the PC menus over the paused game, in the Crash Twinsanity Mac port's style:
+- **Display:** window or fullscreen, resolution (1x–8x), texture filtering and upscale, anti-aliasing, CRT filter, v-sync
+- **Sound:** volume, mute in the background
+- **Controls:** prompts and key bindings
 
-- **Gameplay:** pause in the background.
-- **Display:** window size or fullscreen, the internal resolution (1x to 8x the PS2's), texture filtering, texture upscale
-  (2x, 4x), anti-aliasing (FXAA, or supersampling 2x and 4x, which is slower), the CRT filter, v-sync.
-- **Sound:** the master volume, mute in the background.
-- **Controls:** the button prompts' style and every key to rebind, for the menus, on foot and driving.
+Running slowly? Lower the resolution (3x is the default).
 
-Closing PC Settings goes back to the game's pause menu. If the game runs slowly, lower the internal resolution: 3x is the
-default.
+## Problems
 
-## If something goes wrong
-
-The app writes what it's doing to its standard output: run it from Terminal to see it,
-`"/Applications/Crash Tag Team Racing.app/Contents/MacOS/crash-cttr"`. A crash prints a report there; please include it with any
-bug report.
+Run the app from Terminal to see its log:
+`"/Applications/Crash Tag Team Racing.app/Contents/MacOS/crash-cttr"`. Include it in bug reports.
 
 ## Licences
 
-Crash Tag Team Racing and its content belong to their owners. The app bundles SDL 3 (zlib licence) and the fonts Luckiest Guy
-(Apache 2.0) and Fredoka (SIL Open Font Licence), whose licences are in `Contents/Resources/licenses`, and stb_truetype (public
-domain).
+Crash Tag Team Racing belongs to its owners. The app includes SDL 3, Luckiest Guy, Fredoka and stb_truetype; licences are in
+`Contents/Resources/licenses`.
